@@ -54,7 +54,12 @@ jobs:
       - name: install gosec
         # Pinned for reproducibility. Bump deliberately (read release notes)
         # so a new gosec rule cannot turn CI red on an unrelated push.
-        run: go install github.com/securego/gosec/v2/cmd/gosec@v2.26.1
+        # Also bump together with the go.mod toolchain: gosec carries its own
+        # golang.org/x/tools, and a version older than the Go release fails
+        # with `internal error: package "embed" without types`. v2.29.0 works
+        # with Go 1.27; v2.26.1 fails on 1.27.2. Same pairing rule as
+        # govulncheck below.
+        run: go install github.com/securego/gosec/v2/cmd/gosec@v2.29.0
       - name: scan
         # -severity high gates CI. The HIGH findings on this codebase are
         # documented false positives, suppressed inline with #nosec. MEDIUM
