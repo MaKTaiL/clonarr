@@ -1466,14 +1466,34 @@ func (cs *ConfigStore) AddInstance(inst Instance) (Instance, error) {
 }
 
 // UpdateInstance replaces an existing instance.
+// UpdateInstance applies the editable fields of inst to the stored instance
+// and leaves the rest as it was.
+//
+// inst is decoded from a request body that carries only what the instance form
+// edits, so assigning it wholesale dropped everything else the app keeps per
+// instance: the record of which custom formats clonarr manages there, the
+// drift fingerprints, and the auto-sync pause flag. Correcting a URL or
+// renaming an instance silently un-paused it and lost its managed-CF list.
+//
+// The editable fields are listed rather than the preserved ones, so a field
+// added later is kept by default instead of quietly becoming the next thing a
+// rename wipes.
 func (cs *ConfigStore) UpdateInstance(id string, inst Instance) (Instance, error) {
 	cs.mu.Lock()
 	defer cs.mu.Unlock()
 	for i, existing := range cs.config.Instances {
 		if existing.ID == id {
-			inst.ID = id
-			cs.config.Instances[i] = inst
-			return inst, cs.saveLocked()
+			merged := existing
+			merged.ID = id
+			merged.Name = inst.Name
+			merged.Type = inst.Type
+			merged.URL = inst.URL
+			merged.APIKey = inst.APIKey
+			merged.ExternalAuth = inst.ExternalAuth
+			merged.Username = inst.Username
+			merged.Password = inst.Password
+			cs.config.Instances[i] = merged
+			return merged, cs.saveLocked()
 		}
 	}
 	return Instance{}, fmt.Errorf("instance %s not found", id)

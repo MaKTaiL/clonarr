@@ -450,3 +450,68 @@ func TestGetDeepCopiesNaming(t *testing.T) {
 		t.Error("NamingChanges leaked a new field key")
 	}
 }
+
+// Saving an instance must not drop the state the app keeps about it. The
+// instance form only carries name, type, URL and credentials, so everything
+// else has to survive the update: which custom formats clonarr manages there,
+// the drift fingerprints, and the pause flag. Before this, correcting a URL
+// silently un-paused the instance and lost its managed-CF list.
+func TestUpdateInstanceKeepsStateTheFormDoesNotSend(t *testing.T) {
+	dir := t.TempDir()
+	cs := NewConfigStore(dir)
+	seed := Config{Instances: []Instance{{
+		ID:                       "inst-1",
+		Name:                     "Sonarr",
+		Type:                     "sonarr",
+		URL:                      "http://old:8989",
+		APIKey:                   "key",
+		AutoSyncPaused:           true,
+		PushedCFs:                []PushedCFRecord{{TrashID: "abc", Name: "IMAX"}},
+		CFDriftFingerprints:      map[string]string{"abc": "fp1"},
+		NamingDriftFingerprints:  map[string]string{"series": "fp2"},
+		NamingUpdateFingerprints: map[string]string{"series": "fp3"},
+	}}}
+	data, _ := json.MarshalIndent(seed, "", "  ")
+	if err := os.WriteFile(filepath.Join(dir, "clonarr.json"), data, 0644); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	if err := cs.Load(); err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	// What the form sends: identity and connection only.
+	updated, err := cs.UpdateInstance("inst-1", Instance{
+		Name: "Sonarr (renamed)", Type: "sonarr", URL: "http://new:8989", APIKey: "key2",
+	})
+	if err != nil {
+		t.Fatalf("UpdateInstance: %v", err)
+	}
+
+	if updated.Name != "Sonarr (renamed)" || updated.URL != "http://new:8989" || updated.APIKey != "key2" {
+		t.Errorf("editable fields did not apply: %+v", updated)
+	}
+	if !updated.AutoSyncPaused {
+		t.Error("AutoSyncPaused was reset, so a paused instance silently resumed")
+	}
+	if len(updated.PushedCFs) != 1 || updated.PushedCFs[0].TrashID != "abc" {
+		t.Errorf("PushedCFs lost: %+v", updated.PushedCFs)
+	}
+	for name, got := range map[string]map[string]string{
+		"CFDriftFingerprints":      updated.CFDriftFingerprints,
+		"NamingDriftFingerprints":  updated.NamingDriftFingerprints,
+		"NamingUpdateFingerprints": updated.NamingUpdateFingerprints,
+	} {
+		if len(got) != 1 {
+			t.Errorf("%s lost: %+v", name, got)
+		}
+	}
+
+	// And it is what got persisted, not just what was returned.
+	stored, ok := cs.GetInstance("inst-1")
+	if !ok {
+		t.Fatal("instance missing after update")
+	}
+	if !stored.AutoSyncPaused || len(stored.PushedCFs) != 1 {
+		t.Errorf("state not persisted: paused=%v pushed=%d", stored.AutoSyncPaused, len(stored.PushedCFs))
+	}
+}
