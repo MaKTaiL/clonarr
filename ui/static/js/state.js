@@ -255,6 +255,10 @@ export default function baseState() {
     // beside the name (default - matches Browse). False = hide,
     // collapsing the row to icon + name + score. LocalStorage-
     // persisted per browser so the preference survives reload.
+    // Per app type: does the selected instance keep quality sizes on its
+    // quality profiles instead of in the one shared list the Quality Sizes
+    // tab edits? Reported by the instance's quality-sizes endpoint.
+    qsPerProfileSizes: {},
     spShowCFDesc: (typeof localStorage !== 'undefined' && localStorage.getItem('clonarr_spShowCFDesc') === '0') ? false : true,
     // Sync Preview CF search - single state shared across the three
     // sub-nav surfaces (Profile default, Additional CF, Profile

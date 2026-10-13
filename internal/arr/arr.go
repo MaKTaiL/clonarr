@@ -213,12 +213,21 @@ type ArrQualityProfile struct {
 }
 
 // ArrQualityItem represents a quality level or group within a quality profile.
+//
+// MinSize / MaxSize / PreferredSize arrived with Sonarr v5, which moved
+// quality sizes off the global quality definitions and onto each profile's
+// items. Pointers with omitempty so they stay out of the body entirely on
+// versions that do not have them. See preserveQualitySizes for why they must
+// be carried through rather than left empty.
 type ArrQualityItem struct {
-	ID      int              `json:"id,omitempty"`
-	Name    string           `json:"name,omitempty"`
-	Quality *ArrQualityRef   `json:"quality"`
-	Items   []ArrQualityItem `json:"items"`
-	Allowed bool             `json:"allowed"`
+	ID            int              `json:"id,omitempty"`
+	Name          string           `json:"name,omitempty"`
+	Quality       *ArrQualityRef   `json:"quality"`
+	Items         []ArrQualityItem `json:"items"`
+	Allowed       bool             `json:"allowed"`
+	MinSize       *float64         `json:"minSize,omitempty"`
+	MaxSize       *float64         `json:"maxSize,omitempty"`
+	PreferredSize *float64         `json:"preferredSize,omitempty"`
 }
 
 // ArrLanguage represents a language from the Arr API.
@@ -250,8 +259,118 @@ func (c *ArrClient) ListProfiles() ([]ArrQualityProfile, error) {
 	return profiles, nil
 }
 
+// GetProfile fetches one quality profile by ID.
+func (c *ArrClient) GetProfile(id int) (*ArrQualityProfile, error) {
+	data, status, err := c.DoRequest("GET", fmt.Sprintf("/qualityprofile/%d", id), nil)
+	if err != nil {
+		return nil, err
+	}
+	if status != 200 {
+		return nil, fmt.Errorf("HTTP %d: %s", status, truncate(string(data), 200))
+	}
+	var profile ArrQualityProfile
+	if err := json.Unmarshal(data, &profile); err != nil {
+		return nil, fmt.Errorf("parse profile: %w", err)
+	}
+	return &profile, nil
+}
+
+// preserveQualitySizes copies per-profile quality sizes from the profile as it
+// stands in the Arr instance onto the body about to be sent, for any outgoing
+// item that does not carry a size of its own.
+//
+// Sonarr v5 keeps minSize / maxSize / preferredSize on the profile's items and
+// fills them in for EVERY quality in the profile, not only the ones the user
+// changed. Our body is built from the guide's structure and carries no sizes,
+// and the API treats an absent field as "clear it". Measured against Sonarr
+// 5.0.0.2569: one ordinary profile sync stripped the sizes from all 22
+// qualities, including group members, and returned HTTP 202 with no error.
+//
+// Matching is by quality ID, falling back to the group name for group rows
+// (those carry no quality of their own). The presence of the quality object is
+// what distinguishes the two, not a non-zero ID: "Unknown" is quality ID 0, and
+// treating 0 as "no quality" sent it to the name branch, where a plain quality
+// row has no name to match on, so it was the one quality that still lost its
+// sizes. Only empty fields are filled, so a caller that sets a size
+// deliberately still wins. On Sonarr v4 and Radarr there are no sizes to copy
+// and the fields stay omitted from the body.
+func preserveQualitySizes(current, next []ArrQualityItem) {
+	type sizes struct{ min, max, preferred *float64 }
+	byQuality := map[int]sizes{}
+	byName := map[string]sizes{}
+	anySizes := false
+	var collect func(items []ArrQualityItem)
+	collect = func(items []ArrQualityItem) {
+		for _, it := range items {
+			s := sizes{it.MinSize, it.MaxSize, it.PreferredSize}
+			if s.min != nil || s.max != nil || s.preferred != nil {
+				anySizes = true
+			}
+			if it.Quality != nil {
+				byQuality[it.Quality.ID] = s
+			} else if it.Name != "" {
+				byName[it.Name] = s
+			}
+			collect(it.Items)
+		}
+	}
+	collect(current)
+
+	if !anySizes {
+		// Nothing to copy. Deliberately NOT a reason to strip what the caller
+		// set: a profile with no sizes is also what an all-Unlimited profile
+		// looks like, and what the old wiping bug left behind, so stripping
+		// here would make those profiles impossible to repair. Whether sizes
+		// belong in the body at all is a question about the instance, and
+		// QualityDefinitionsCarrySizes answers it where that decision is made.
+		return
+	}
+
+	var apply func(items []ArrQualityItem)
+	apply = func(items []ArrQualityItem) {
+		for i := range items {
+			var s sizes
+			var found bool
+			if items[i].Quality != nil {
+				s, found = byQuality[items[i].Quality.ID]
+			} else if items[i].Name != "" {
+				s, found = byName[items[i].Name]
+			}
+			if found {
+				// Copies the pointer, not the value. Safe because `current`
+				// is read inside the calling function and dropped as soon as
+				// the request is built, so nothing can write through it
+				// later and change what we just sent.
+				if items[i].MinSize == nil {
+					items[i].MinSize = s.min
+				}
+				if items[i].MaxSize == nil {
+					items[i].MaxSize = s.max
+				}
+				if items[i].PreferredSize == nil {
+					items[i].PreferredSize = s.preferred
+				}
+			}
+			apply(items[i].Items)
+		}
+	}
+	apply(next)
+}
+
 // UpdateProfile updates a quality profile (primarily for CF scores).
+//
+// Reads the profile as it stands first, so per-profile quality sizes survive
+// the round trip (see preserveQualitySizes). The read is deliberately fatal:
+// sending the body without it would silently wipe the sizes on Sonarr v5, and
+// a sync the user can retry is the better failure.
 func (c *ArrClient) UpdateProfile(profile *ArrQualityProfile) error {
+	if profile.ID > 0 {
+		current, err := c.GetProfile(profile.ID)
+		if err != nil {
+			return fmt.Errorf("read profile before update: %w", err)
+		}
+		preserveQualitySizes(current.Items, profile.Items)
+	}
 	data, status, err := c.DoRequest("PUT", fmt.Sprintf("/qualityprofile/%d", profile.ID), profile)
 	if err != nil {
 		return err
@@ -505,7 +624,24 @@ func (c *ArrClient) ListCollectionProfileIDs() ([]int, error) {
 }
 
 // CreateProfile creates a new quality profile.
+// CreateProfile adds a new quality profile.
+//
+// Fills the item sizes from the app's profile schema first. On a version that
+// keeps sizes per profile there is nothing else to copy them from, and a
+// profile created without them is born with no size limits at all - measured
+// on Sonarr 5.0.0.2569: a POST with the fields absent stored null on all 22
+// qualities, and that version no longer falls back to the shared list. The
+// read is fatal for the same reason the one in UpdateProfile is: a profile
+// that quietly accepts any file size is worse than a create the user retries.
+// On Radarr and Sonarr v4 the schema carries no sizes, nothing is copied, and
+// the body is unchanged.
 func (c *ArrClient) CreateProfile(profile *ArrQualityProfile) (*ArrQualityProfile, error) {
+	schema, err := c.GetProfileSchema()
+	if err != nil {
+		return nil, fmt.Errorf("read profile schema before create: %w", err)
+	}
+	preserveQualitySizes(schema.Items, profile.Items)
+
 	data, status, err := c.DoRequest("POST", "/qualityprofile", profile)
 	if err != nil {
 		return nil, err

@@ -2226,6 +2226,11 @@ func resolveQualityItems(trashItems []QualityItem, qualityByName map[string]*arr
 				},
 				Items:   []arr.ArrQualityItem{},
 				Allowed: ti.Allowed,
+				// Nil today, and nil stays out of the body. When the guide
+				// starts publishing per-profile sizes these carry them.
+				MinSize:       ti.MinSize,
+				MaxSize:       ti.MaxSize,
+				PreferredSize: ti.PreferredSize,
 			})
 		} else {
 			// Quality group — resolve each sub-item, skip unknowns.
@@ -2256,6 +2261,11 @@ func resolveQualityItems(trashItems []QualityItem, qualityByName map[string]*arr
 					},
 					Items:   []arr.ArrQualityItem{},
 					Allowed: ti.Allowed,
+					// Group members inherit the group's sizes. A member-level
+					// value, if the guide ever has one, would be set here.
+					MinSize:       ti.MinSize,
+					MaxSize:       ti.MaxSize,
+					PreferredSize: ti.PreferredSize,
 				})
 			}
 			// Reverse so first-in-clonarr-UI (top of group) ends up last in Arr API.

@@ -48,6 +48,7 @@ export default {
 
     async loadInstanceQS(appType, instanceId) {
       if (!instanceId) {
+        this.qsPerProfileSizes = { ...this.qsPerProfileSizes, [appType]: false };
         this.qsInstanceDefs = { ...this.qsInstanceDefs, [appType]: null };
         this.qsOverrides = { ...this.qsOverrides, [appType]: {} };
         this.qsAutoSync = { ...this.qsAutoSync, [appType]: { enabled: false, type: '' } };
@@ -60,7 +61,11 @@ export default {
           fetch(`/api/instances/${instanceId}/quality-sizes/auto-sync`)
         ]);
         if (defsR.ok) {
-          this.qsInstanceDefs = { ...this.qsInstanceDefs, [appType]: await defsR.json() };
+          // The endpoint reports where this instance keeps its sizes: on the
+          // quality profiles, or in the one shared list this tab edits.
+          const d = await defsR.json();
+          this.qsInstanceDefs = { ...this.qsInstanceDefs, [appType]: d.definitions || [] };
+          this.qsPerProfileSizes = { ...this.qsPerProfileSizes, [appType]: !!d.perProfileSizes };
         }
         if (overR.ok) {
           this.qsOverrides = { ...this.qsOverrides, [appType]: await overR.json() };
@@ -193,6 +198,22 @@ export default {
       } catch (e) { console.error('saveQSOverrides:', e); }
     },
 
+    // True when this instance keeps quality sizes on its quality profiles, so
+    // this whole tab describes a list it does not read. Set from the
+    // definitions response in loadInstanceQS.
+    qsPerProfile(appType) {
+      return !!(this.qsPerProfileSizes || {})[appType];
+    },
+
+    // Should the instance-side columns render? Only when an instance is
+    // selected AND its sizes actually live in the shared list. On the versions
+    // that keep them per profile every one of those cells would read 0.0 or
+    // unlimited, because the fields are absent there, and every row would be
+    // painted as differing from TRaSH for no reason.
+    qsShowInstanceCols(appType) {
+      return !!this.mediaInstanceId[appType] && !this.qsPerProfile(appType);
+    },
+
     async toggleQSAutoSync(appType, enabled, inputEl) {
       const instanceId = this.mediaInstanceId[appType];
       if (!instanceId) return;
@@ -291,6 +312,14 @@ export default {
           body: JSON.stringify({ definitions: [{ ...def, minSize: target.min, preferredSize: target.preferred, maxSize: target.max }] })
         });
         if (r.ok) {
+          // Sonarr 5 keeps these sizes on each quality profile, so the shared
+          // list it would be written to is not read any more. The backend says
+          // so rather than reporting a sync that changed nothing.
+          const d = await r.json().catch(() => ({}));
+          if (d.perProfileOnly) {
+            this.qsSyncResult = { ...this.qsSyncResult, [appType]: { ok: false, info: true, message: d.message } };
+            return;
+          }
           this.qsSyncResult = { ...this.qsSyncResult, [appType]: { ok: true, message: `Synced ${qualityName}` } };
           await this.loadInstanceQS(appType, instanceId);
         } else {
@@ -340,6 +369,11 @@ export default {
         });
 
         if (r.ok) {
+          const d = await r.json().catch(() => ({}));
+          if (d.perProfileOnly) {
+            this.qsSyncResult = { ...this.qsSyncResult, [appType]: { ok: false, info: true, message: d.message } };
+            return;
+          }
           this.qsSyncResult = { ...this.qsSyncResult, [appType]: { ok: true, message: `Synced ${updated.length} quality sizes` } };
           await this.loadInstanceQS(appType, instanceId);
         } else {

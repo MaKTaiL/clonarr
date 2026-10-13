@@ -103,6 +103,19 @@ type QualityItem struct {
 	Name    string   `json:"name"`
 	Allowed bool     `json:"allowed"`
 	Items   []string `json:"items,omitempty"`
+
+	// Per-profile quality sizes, for the versions that keep them on the
+	// profile rather than in one shared list (Sonarr v5 and later). Nil means
+	// "say nothing", which leaves whatever the instance already has in place.
+	// Nothing populates these yet: the guide has settled that profiles will
+	// carry a suggested size set the user can override, but not yet how that
+	// looks in its JSON, so the mapping is the only piece still missing.
+	// resolveQualityItems carries them to the Arr body, and UpdateProfile
+	// leaves an explicit value alone, so wiring the guide side is all that
+	// step needs.
+	MinSize       *float64 `json:"minSize,omitempty"`
+	MaxSize       *float64 `json:"maxSize,omitempty"`
+	PreferredSize *float64 `json:"preferredSize,omitempty"`
 }
 
 // cloneQualityItems returns a deep copy of a slice of QualityItems.

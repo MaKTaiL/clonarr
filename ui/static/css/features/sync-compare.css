@@ -26,6 +26,9 @@
   .result-banner { border-radius: 8px; padding: 14px 20px; margin-bottom: 16px; max-height: 40vh; overflow-y: auto; }
   .result-banner.success { background: var(--accent-green-bg); border: 1px solid var(--accent-green-strong); color: var(--accent-green); }
   .result-banner.error { background: var(--accent-red-bg); border: 1px solid var(--accent-red-strong); color: var(--accent-red); }
+  /* Neither a success nor a failure: nothing was written because there was
+     nothing to write. Neutral so it does not read as an error. */
+  .result-banner.info { background: var(--bg-elevated); border: 1px solid var(--border-muted); color: var(--text-body); }
   .result-banner .result-title { font-weight: 600; font-size: 14px; }
   .result-banner .result-detail { font-size: 12px; margin-top: 4px; opacity: 0.8; }
 

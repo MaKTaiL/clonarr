@@ -1297,7 +1297,14 @@ func (s *Server) handleInstanceQualitySizes(w http.ResponseWriter, r *http.Reque
 		writeError(w, 502, "Failed to fetch quality sizes: "+err.Error())
 		return
 	}
-	writeJSON(w, defs)
+	// perProfileSizes tells the UI the shared list is not what this instance
+	// reads, so it can say so instead of comparing against values that mean
+	// nothing there. Derived from the list itself: on those versions the three
+	// size fields are simply absent.
+	writeJSON(w, map[string]any{
+		"definitions":     defs,
+		"perProfileSizes": !arr.QualityDefinitionsCarrySizes(defs),
+	})
 }
 
 func (s *Server) handleGetInstanceNaming(w http.ResponseWriter, r *http.Request) {
@@ -1439,6 +1446,26 @@ func (s *Server) handleSyncQualitySizes(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
+	client := core.NewArrClientFor(inst, s.Core.HTTPClient)
+
+	// Where do this instance's sizes live? Asked before any comparison: on the
+	// versions that keep them per profile the shared list has no sizes to
+	// compare against, so "all values match" would be a meaningless answer.
+	perProfile, err := client.KeepsQualitySizesPerProfile()
+	if err != nil {
+		writeError(w, 502, "Failed to read quality sizes: "+err.Error())
+		return
+	}
+	if perProfile {
+		writeJSON(w, map[string]any{
+			"status":         "skipped",
+			"count":          0,
+			"perProfileOnly": true,
+			"message":        "This version of Sonarr stores quality sizes on each quality profile instead of in one shared list, so nothing was written here. Set them per profile in Sonarr. Clonarr keeps whatever you set there when it syncs a profile.",
+		})
+		return
+	}
+
 	// If type is provided, build definitions by comparing TRaSH data with instance
 	if req.Type != "" && len(req.Definitions) == 0 {
 		defs, err := s.buildQualitySizeDefs(inst, req.Type)
@@ -1468,7 +1495,6 @@ func (s *Server) handleSyncQualitySizes(w http.ResponseWriter, r *http.Request) 
 		req.Definitions[i].MaxSize = arr.NormalizeSize(req.Definitions[i].MaxSize, lim.Max)
 	}
 
-	client := core.NewArrClientFor(inst, s.Core.HTTPClient)
 	if err := client.UpdateQualityDefinitions(req.Definitions); err != nil {
 		writeError(w, 502, "Sync failed: "+err.Error())
 		return
@@ -1598,7 +1624,7 @@ func (s *Server) handleGetQSAutoSync(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleSaveQSAutoSync(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
-	_, ok := s.Core.Config.GetInstance(id)
+	inst, ok := s.Core.Config.GetInstance(id)
 	if !ok {
 		writeError(w, 404, "Instance not found")
 		return
@@ -1609,6 +1635,26 @@ func (s *Server) handleSaveQSAutoSync(w http.ResponseWriter, r *http.Request) {
 	if err := json.NewDecoder(r.Body).Decode(&as); err != nil {
 		writeError(w, 400, "Invalid JSON")
 		return
+	}
+
+	// Turning it on where it can never do anything leaves the user with a
+	// switch that looks active and a skip line on every pull. Turning it off
+	// is always allowed.
+	if as.Enabled {
+		client := core.NewArrClientFor(inst, s.Core.HTTPClient)
+		perProfile, err := client.KeepsQualitySizesPerProfile()
+		if err != nil {
+			writeError(w, 502, "Failed to read quality sizes: "+err.Error())
+			return
+		}
+		if perProfile {
+			writeJSON(w, map[string]any{
+				"status":         "skipped",
+				"perProfileOnly": true,
+				"message":        "This version of Sonarr stores quality sizes on each quality profile instead of in one shared list, so nothing was written here. Set them per profile in Sonarr. Clonarr keeps whatever you set there when it syncs a profile.",
+			})
+			return
+		}
 	}
 
 	err := s.Core.Config.Update(func(cfg *core.Config) {
@@ -1644,7 +1690,6 @@ func (s *Server) AutoSyncQualitySizes() {
 		if !ok {
 			continue
 		}
-
 		// Get TRaSH quality sizes for this type
 		ad := s.Core.Trash.GetAppData(inst.Type)
 		if ad == nil {
@@ -1671,6 +1716,14 @@ func (s *Server) AutoSyncQualitySizes() {
 		}
 
 		// Build lookup
+		// This version keeps sizes on the quality profiles, so the shared list
+		// it would write to is not read. Skip rather than log a success that
+		// did not happen. Free check: the list is already in hand.
+		if !arr.QualityDefinitionsCarrySizes(defs) {
+			s.Core.DebugLog.Logf(core.LogAutoSync, "QS [%s]: skipped, this version keeps quality sizes on the quality profiles", inst.Name)
+			continue
+		}
+
 		defByName := make(map[string]*arr.ArrQualityDefinition)
 		for i := range defs {
 			defByName[defs[i].Quality.Name] = &defs[i]
