@@ -3,3 +3,5 @@ config/
 ui/clonarr
 run-dev.cmd
 .claude/
+.DS_Store
+._*
