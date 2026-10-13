@@ -526,6 +526,11 @@ func (s *Server) handleApply(w http.ResponseWriter, r *http.Request) {
 				cfg.AutoSync.Rules[i].QualityStructure = req.QualityStructure
 				cfg.AutoSync.Rules[i].Behavior = req.Behavior
 				cfg.AutoSync.Rules[i].Overrides = req.Overrides
+				// Editor state, not sync input. Only callers that actually
+				// own the toggle send it; everyone else leaves it as it was.
+				if req.CustomizeEnabled != nil {
+					cfg.AutoSync.Rules[i].CustomizeEnabled = req.CustomizeEnabled
+				}
 				// Persist KeepArrCFIDs alongside the other request fields.
 				// Without this, the Compare flow's "leave this extra alone"
 				// list lived only on the request — frontend follows up with
@@ -645,6 +650,7 @@ func (s *Server) handleApply(w http.ResponseWriter, r *http.Request) {
 			QualityStructure:     req.QualityStructure,
 			Behavior:             req.Behavior,
 			Overrides:            req.Overrides,
+			CustomizeEnabled:     req.CustomizeEnabled,
 			LastSyncTime:         nowSync,
 			UpdatedAt:            nowSync,
 			LastSyncCommit:       currentCommit,

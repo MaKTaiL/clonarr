@@ -25,7 +25,7 @@
                 <!-- Combined view: a small, muted note that this group is not in the
                      profile by default (self-identifying in All categories), instead
                      of a loud badge. Omitted in the Additional CF tab (redundant). -->
-                <span class="sp-additional-note" x-show="pdCombined()">not in this profile by default</span>
+                <span class="sp-additional-note" x-show="pdCombined() && pdOverridesEnabled">not in this profile by default</span>
                 <span class="sp-group-badges">
                   <span class="sp-badge" x-show="g.exclusive">pick one</span>
                 </span>
@@ -104,25 +104,21 @@
                           @mouseleave="hideCFTooltip()"></span>
                   </div>
                   <div class="sp-cf-desc" x-html="cfInlineDescriptionHTML(cf, activeAppType)"></div>
-                  <template x-if="!pdOverridesEnabled">
-                    <div class="sp-cf-score" :class="(_eff > 0 ? 'positive' : _eff < 0 ? 'negative' : 'zero')" x-text="_eff != null ? ((_eff > 0 ? '+' : '') + _eff) : ''"></div>
-                  </template>
-                  <template x-if="pdOverridesEnabled">
-                    <div class="sp-cf-score-edit">
-                      <template x-if="_mod">
-                        <button class="sp-basics-reset sp-cf-score-reset" @click="pdResetCFScore(cf.trashId)" x-tt="'Reset to ' + ((_def > 0 ? '+' : '') + _def)">&#8634;</button>
-                      </template>
-                      <!-- Additional CF: opted-in iff sel[cf.trashId] === true.
-                           Otherwise the CF isn't being synced, so editing
-                           its score would just leak into the payload via
-                           the safety net. Disabled until opt-in is on. -->
-                      <input type="number" class="sp-cf-score-input"
-                             :value="_eff"
-                             :disabled="!selectedOptionalCFs[cf.trashId]"
-                             :title="!selectedOptionalCFs[cf.trashId] ? 'Enable this CF first to edit its score' : ''"
-                             @change="spApplyCFScore(cf.trashId, $el.value, _def)">
-                    </div>
-                  </template>
+                  <div class="sp-cf-score-edit">
+                    <template x-if="_mod">
+                      <button class="sp-basics-reset sp-cf-score-reset" @click="pdResetCFScore(cf.trashId)" x-tt="'Reset to ' + ((_def > 0 ? '+' : '') + _def)">&#8634;</button>
+                    </template>
+                    <!-- Additional CF: opted-in iff sel[cf.trashId] === true.
+                         Otherwise the CF isn't being synced, so editing
+                         its score would just leak into the payload via
+                         the safety net. Disabled until opt-in is on. -->
+                    <input type="number" class="sp-cf-score-input"
+                           :value="_eff"
+                           :class="_mod ? 'overridden' : (_eff > 0 ? 'positive' : _eff < 0 ? 'negative' : 'zero')"
+                           :disabled="!selectedOptionalCFs[cf.trashId]"
+                           :title="!selectedOptionalCFs[cf.trashId] ? 'Enable this CF first to edit its score' : ''"
+                           @change="spApplyCFScore(cf.trashId, $el.value, _def)">
+                  </div>
                 </div>
               </template>
             </div>

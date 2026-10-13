@@ -265,6 +265,14 @@ type AutoSyncRule struct {
 	// Cleared when a successful sync applies the change set.
 	WatchState     *WatchState     `json:"watchState,omitempty"`
 	PendingChanges []PendingChange `json:"pendingChanges,omitempty"`
+	// CustomizeEnabled remembers whether the user had turned on "Customize
+	// this profile" in the editor. Editor state only - it never reaches the
+	// sync engine, and two rules with identical sync input but different
+	// values here sync identically. Reopening the rule restores the toggle
+	// from this field, so the editor shows what the user left behind rather
+	// than inferring it from scores and opt-ins. Nil on rules saved before
+	// the field existed; the editor falls back to inference for those.
+	CustomizeEnabled *bool `json:"customizeEnabled,omitempty"`
 }
 
 // SyncBehavior controls how the sync engine handles CF additions, score overrides, and removals.
@@ -1091,6 +1099,10 @@ func (cs *ConfigStore) Get() Config {
 			if r.WatchState != nil {
 				ws := *r.WatchState
 				cfg.AutoSync.Rules[i].WatchState = &ws
+			}
+			if r.CustomizeEnabled != nil {
+				ce := *r.CustomizeEnabled
+				cfg.AutoSync.Rules[i].CustomizeEnabled = &ce
 			}
 			if len(r.PendingChanges) > 0 {
 				cfg.AutoSync.Rules[i].PendingChanges = append([]PendingChange(nil), r.PendingChanges...)

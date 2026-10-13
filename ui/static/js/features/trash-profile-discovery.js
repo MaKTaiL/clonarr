@@ -1331,8 +1331,17 @@ export default {
     // groups (Unwanted French vs Default) happens in the template
     // via spAdditionalGroupCFs which trims overlapping CFs and
     // leaves the unique ones.
+    //
+    // Customize OFF: the list narrows to the user's OWN custom formats
+    // (the `[My custom formats] <category>` groups built in loadExtraCFList
+    // from the backend's Custom parent category). Those are always addable - a
+    // format the user built themselves has no "profile default" to
+    // deviate from, so gating it behind Customize only got in the way.
+    // Customize then means what the button says: pull in TRaSH-Guides
+    // formats that don't belong to this profile.
     spAdditionalCFGroups() {
       const all = this.extraCFGroups || [];
+      const customOnly = !this.pdOverridesEnabled;
       const inProfileName = new Set();
       const profileCFSets = new Set();
       for (const g of (this.profileDetail?.detail?.trashGroups || [])) {
@@ -1342,10 +1351,22 @@ export default {
       }
       return all.filter(g => {
         if (!g.name || inProfileName.has(g.name)) return false;
+        if (customOnly && !g.isCustomGroup) return false;
         const ids = (g.cfs || []).map(c => c.trashId).filter(Boolean).sort().join('|');
         if (ids && profileCFSets.has(ids)) return false; // variant of active profile group
         return true;
       });
+    },
+
+    // Should the Additional CF tab render? Customize ON: yes, unless the
+    // combined view has folded the additional groups into the Profile
+    // tab. Customize OFF: only when the user actually has custom formats
+    // to add - an empty tab would just be a dead end. The combined view
+    // is Customize-gated (spDefaultSections ignores pdCombined while
+    // Customize is off), so the tab is the only route to them there.
+    spShowAdditionalTab() {
+      if (this.pdOverridesEnabled) return !this.pdCombined();
+      return (this.spAdditionalCFGroups() || []).some(g => this.spAdditionalGroupCFs(g).length > 0);
     },
 
     // CFs in the given Additional CF group that aren't already
@@ -1550,16 +1571,24 @@ export default {
       this.confirmModal = {
         show: true,
         title: 'Customize this profile',
-        message: 'Customizing this profile lets you change scores, exclude required CFs, and add extras beyond the profile defaults.\n\nThese edits can change how the profile picks releases - make sure you understand what each setting does before changing it.',
+        message: 'Customizing this profile adds the TRaSH-Guides formats that are not part of it, and lets you exclude formats it includes.\n\nYour own custom formats, and the score of any format, are editable without this.\n\nThese edits can change how the profile picks releases - make sure you understand what each setting does before changing it.',
         cancelLabel: 'Use defaults',
         confirmLabel: 'I understand',
-        onConfirm: () => { this.pdOverridesEnabled = true; },
+        onConfirm: () => {
+          this.pdOverridesEnabled = true;
+          // In combined view the additional groups move into the Profile
+          // tab, so this tab's button disappears. Bounce off it rather than
+          // leave a pane no tab points at. Mirror of pdDisableOverrides.
+          if (this.spActiveTab === 'additional' && !this.spShowAdditionalTab()) {
+            this.spActiveTab = 'default';
+          }
+        },
         onCancel: () => {},
       };
     },
 
     // Save a number from the profile editor's basics row, which is editable
-    // without Customize (Customize only unlocks CF editing). An empty or
+    // without Customize (Customize unlocks the TRaSH extras). An empty or
     // invalid entry puts the current value back instead of saving 0
     // (Number('') is 0).
     spBasicsSetNumber(field, el) {

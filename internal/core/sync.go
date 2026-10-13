@@ -186,6 +186,14 @@ type SyncRequest struct {
 	Overrides *SyncOverrides `json:"overrides,omitempty"`
 	// Sync behavior rules (nil = defaults: add_missing, remove_custom, reset_to_zero)
 	Behavior *SyncBehavior `json:"behavior,omitempty"`
+	// CustomizeEnabled mirrors the profile editor's "Customize this profile"
+	// toggle. Pure editor state - the sync engine ignores it. Carried on the
+	// request so the rule remembers whether the user had turned it on, and
+	// reopening the rule restores exactly that instead of guessing from the
+	// rule's contents. Pointer because a caller that doesn't send the field
+	// (Compare apply, rollback, Sync All) must leave the stored value alone
+	// rather than reset it to off.
+	CustomizeEnabled *bool `json:"customizeEnabled,omitempty"`
 }
 
 // SyncOverrides allows users to override specific profile settings from TRaSH defaults.

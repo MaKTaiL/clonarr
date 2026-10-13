@@ -158,7 +158,11 @@ export default {
         overrides: ru.overrides || null,
         description: ru.description || '',
       }, this.profileDetail.detail);
-      this.pdOverridesEnabled = true;
+      // applyRuleStateToEditor turns Customize on by itself when the import
+      // carries TRaSH formats from outside the base profile, or excluded
+      // formats. Scores and bundled custom formats need it off, so don't
+      // force it on here - that would greet the importer with the whole
+      // TRaSH catalogue expanded.
       this.showToast('Imported. Review the settings, then Apply & Sync to name and create the rule.', 'success', 7000);
     },
   },

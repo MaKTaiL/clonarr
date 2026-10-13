@@ -164,7 +164,8 @@
 }
 .sp-basics-edit-icon:hover { color: var(--accent-blue); background: var(--bg-elevated); }
 
-/* CF score inline editor - replaces .sp-cf-score in editor mode.
+/* CF score inline editor - the only score rendering; the old read-only
+   .sp-cf-score / .sp-ov-cf-score badges it replaced are gone.
    Compact number input + adjacent reset-icon (only when overridden).
    Sits in the same right-aligned column as the read-only score so
    row layout doesn't shift when Customize flips. */
@@ -194,6 +195,16 @@
   text-align: left;
 }
 .sp-cf-score-input:focus { outline: 1px solid var(--app-color); outline-offset: 0; }
+/* Score colouring, carried over from the read-only .sp-cf-score /
+   .sp-ov-cf-score badges these inline editors replaced: green above zero,
+   red below, muted at zero, and the app colour for a score the user has
+   changed away from the profile default. The binding picks one class, so
+   `overridden` wins without depending on rule order here. Colour sits on
+   the text and leaves the input's border and background neutral. */
+.sp-cf-score-input.positive   { color: var(--accent-green); }
+.sp-cf-score-input.negative   { color: var(--accent-red); }
+.sp-cf-score-input.zero       { color: var(--text-muted); }
+.sp-cf-score-input.overridden { color: var(--app-color); }
 .sp-cf-score-reset { font-size: 13px; }
 .sp-basics-divider {
   width: 1px;
@@ -733,13 +744,6 @@ button.sp-summary-active:focus-visible {
   color: var(--text-muted);
 }
 .sp-action-row-combined > .sp-action-label { grid-column: 2; }
-.sp-action-row-combined .sp-cf-score {
-  grid-column: 4;
-  justify-self: end;
-  font-size: 12px;
-  font-variant-numeric: tabular-nums;
-  font-family: var(--font-mono, monospace);
-}
 .sp-action-row-combined .sp-cf-score-edit { grid-column: 4; justify-self: end; }
 /* Description column - mirrors .sp-cf-desc prose styling so single-CF rows
    read identically to the multi-CF / Additional CF rows. */
@@ -758,7 +762,6 @@ button.sp-summary-active:focus-visible {
    left the columns unstretched and floated the score toward centre (the
    single-CF HDR groups in All categories). */
 .sp-hide-cf-desc .sp-action-row-combined { grid-template-columns: 22px 1fr 100px; }
-.sp-hide-cf-desc .sp-action-row-combined .sp-cf-score,
 .sp-hide-cf-desc .sp-action-row-combined .sp-cf-score-edit { grid-column: 3; }
 .sp-action-label {
   color: var(--text-primary);
@@ -802,7 +805,6 @@ button.sp-summary-active:focus-visible {
 .sp-cf-row > .sp-cf-icon { grid-column: 1; align-self: center; }
 .sp-cf-row > .sp-cf-name { grid-column: 2; align-self: center; }
 .sp-cf-row > .sp-cf-desc { grid-column: 3; align-self: center; }
-.sp-cf-row > .sp-cf-score,
 .sp-cf-row > .sp-cf-score-edit { grid-column: 4; align-self: center; justify-self: end; }
 .sp-cf-row:hover {
   background: var(--bg-elevated);
@@ -853,7 +855,6 @@ button.sp-summary-active:focus-visible {
    preference applies across Profile default and Additional CF. */
 .sp-hide-cf-desc .sp-cf-row { grid-template-columns: 22px 1fr 100px; }
 .sp-hide-cf-desc .sp-cf-row > .sp-cf-name { grid-column: 2; }
-.sp-hide-cf-desc .sp-cf-row > .sp-cf-score,
 .sp-hide-cf-desc .sp-cf-row > .sp-cf-score-edit { grid-column: 3; }
 .sp-hide-cf-desc .sp-cf-desc { display: none; }
 /* Dimmed state (group off OR cf off): dims icon, name and score
@@ -862,7 +863,6 @@ button.sp-summary-active:focus-visible {
    - matters most when descriptions are visible. */
 .sp-cf-row-dimmed > .sp-cf-icon,
 .sp-cf-row-dimmed > .sp-cf-name,
-.sp-cf-row-dimmed > .sp-cf-score,
 .sp-cf-row-dimmed > .sp-cf-score-edit { opacity: 0.35; }
 /* Descriptions toggle tab - lives at the right edge of the tab row
    alongside the real tabs. .sp-tab-utility pushes it right via auto
@@ -980,15 +980,6 @@ button.sp-summary-active:focus-visible {
   letter-spacing: 0.2px;
   flex-shrink: 0;
 }
-.sp-cf-score {
-  text-align: right;
-  font-variant-numeric: tabular-nums;
-  font-family: var(--font-mono, monospace);
-  font-size: 12px;
-}
-.sp-cf-score.positive { color: var(--accent-green); }
-.sp-cf-score.negative { color: var(--accent-red); }
-.sp-cf-score.zero     { color: var(--text-muted); }
 
 /* ===== Profile overview tab =====
    Uses the same .sp-body two-column layout as Profile default (sub-nav
@@ -1154,6 +1145,11 @@ button.sp-summary-active:focus-visible {
   cursor: pointer;
   font-family: inherit;
 }
+/* The header row holds only two cells, so without an explicit column the
+   Score header auto-placed into the description track, left of the scores
+   it labels. Pin it to the score column in both description modes. */
+.sp-ov-cf-row > .sp-ov-cf-header-score { grid-column: 3; justify-self: end; }
+.sp-hide-cf-desc .sp-ov-cf-row > .sp-ov-cf-header-score { grid-column: 2; }
 .sp-ov-cf-header-cell:hover { color: var(--text-primary); }
 .sp-ov-cf-header-cell.active { color: var(--app-color); }
 .sp-ov-cf-header-arrow {
@@ -1255,11 +1251,20 @@ button.sp-summary-active:focus-visible {
 .sp-ov-cf-row > .sp-ov-cf-namecell,
 .sp-ov-cf-row > .sp-ov-cf-name { align-self: center; }
 .sp-ov-cf-row > .sp-ov-cf-desc { align-self: center; grid-column: 2; }
-.sp-ov-cf-row > .sp-ov-cf-score { align-self: center; justify-self: end; grid-column: 3; }
-/* Description-hidden: drop the desc column so the score hugs the
-   name, matching .sp-cf-row's hide behaviour on Profile default. */
-.sp-hide-cf-desc .sp-ov-cf-row { grid-template-columns: 220px 100px; }
-.sp-hide-cf-desc .sp-ov-cf-row > .sp-ov-cf-score { grid-column: 2; }
+/* Inline score editor in the overview rows. Without this it falls through to
+   the bare .sp-cf-score-edit rule, which is justify-self:start and sets no
+   align-self, so the input sat left-aligned and stuck to the top of any row
+   whose description wraps to two lines. The .sp-cf-row variants further down
+   do the same job for the Profile default tab. */
+.sp-ov-cf-row > .sp-cf-score-edit { align-self: center; justify-self: end; grid-column: 3; }
+/* Descriptions hidden: drop the desc column. The name track flexes
+   (minmax(0,…) so long names still ellipsis rather than widen the row),
+   which keeps the score at the right edge - .sp-hide-cf-desc .sp-cf-row
+   does the same on the other tabs. A fixed 220px name track here left the
+   whole row 320px wide, so the score sat right after the name while every
+   other tab had it at the far right. */
+.sp-hide-cf-desc .sp-ov-cf-row { grid-template-columns: minmax(0, 1fr) 100px; }
+.sp-hide-cf-desc .sp-ov-cf-row > .sp-cf-score-edit { grid-column: 2; }
 .sp-hide-cf-desc .sp-ov-cf-desc { display: none; }
 /* Inline description in the overview's CF rows. Mirrors .sp-cf-desc
    so Profile default and Overview render identical prose styling. */
@@ -1353,21 +1358,11 @@ button.sp-summary-active:focus-visible {
   overflow: visible;
   text-overflow: clip;
 }
-.sp-ov-cf-score {
-  font-variant-numeric: tabular-nums;
-  font-family: var(--font-mono, monospace);
-  font-size: 12px;
-  text-align: left;
-}
 /* Customized value (basics or CF score) - themed --app-color so the
    "modified" highlight follows the active app (yellow Radarr / blue
    Sonarr). Was hardcoded orange which read like a warning even
    though customizations are intentional. */
 .sp-ov-basics-row.sp-ov-modified .sp-ov-basics-val {
-  color: var(--app-color);
-  cursor: help;
-}
-.sp-ov-cf-score.overridden {
   color: var(--app-color);
   cursor: help;
 }
@@ -1389,9 +1384,6 @@ button.sp-summary-active:focus-visible {
 .sp-ov-basics-editlink.sp-ov-basics-val-modified {
   color: var(--app-color);
 }
-.sp-ov-cf-score.positive { color: var(--accent-green); }
-.sp-ov-cf-score.negative { color: var(--accent-red); }
-.sp-ov-cf-score.zero     { color: var(--text-muted); }
 /* Diffs card - fixed-column grid so reset, label, old-value, arrow,
    new-value land in the same x-position across rows. Reset-icon at
    column 1 (far left) keeps it in a consistent place regardless of

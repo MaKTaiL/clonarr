@@ -212,10 +212,13 @@ export default function baseState() {
     // main.js. The global tooltip element lives in partials/modals/tooltip.html.
     tt: { show: false, text: '', x: 0, y: 0, flip: false, placement: 'top' },
     selectedOptionalCFs: {},
-    // Profile detail - "Customize this profile" toggle. Gates custom format editing
-    // (score inputs, Additional CF, excluding required CFs, override cards). The basics
-    // row at the top (language, scores, upgrades, cutoff, qualities) is editable either
-    // way and its changes are counted in the summary strip.
+    // Profile detail - "Customize this profile" toggle. Gates the TRaSH-Guides
+    // formats that are not part of this profile (the Additional CF tab's TRaSH
+    // groups), excluding required CFs, and the override cards.
+    // Editable either way, and counted in the summary strip either way:
+    //   - the basics row at the top (language, scores, upgrades, cutoff, qualities)
+    //   - the user's own custom formats (Additional CF narrows to those when off)
+    //   - the score of any custom format
     // Auto-enabled on restore when a CF-level customization is found, so custom format
     // state that will sync is never hidden behind a locked editor.
     pdOverridesEnabled: false,
@@ -235,7 +238,7 @@ export default function baseState() {
     // save-success + on explicit Discard. JSON string for cheap
     // structural compare.
     _profileBaseline: null,
-    spActiveTab: 'default',     // 'default' | 'overview' | 'additional' (Customize-gated)
+    spActiveTab: 'default',     // 'default' | 'overview' | 'additional' (see spShowAdditionalTab)
     // Additional-CF view mode (Customize-gated): 'combined' folds additional groups
     // into the Profile default categories; 'split' keeps them in their own tab.
     // Persisted per browser, global across profiles. Default combined.

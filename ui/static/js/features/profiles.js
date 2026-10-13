@@ -108,6 +108,94 @@ export default {
       return defaults;
     },
 
+    // Every CF that has a row of its own in this profile's editor: the
+    // members of the profile's cf-groups plus its direct formatItems.
+    // On or off, those rows are there with Customize off, score included.
+    _profileCFIds() {
+      const ids = new Set();
+      const detail = this.profileDetail?.detail;
+      for (const group of (detail?.trashGroups || [])) {
+        for (const cf of (group.cfs || [])) {
+          if (cf.trashId) ids.add(cf.trashId);
+        }
+      }
+      for (const fi of (detail?.formatItemNames || [])) {
+        if (fi.trashId) ids.add(fi.trashId);
+      }
+      return ids;
+    },
+
+    // Does this list of CF trash_ids hold anything that "Customize this
+    // profile" has to be on for the user to see? Only a TRaSH-Guides format
+    // from outside this profile does - that is what the toggle unlocks.
+    // The user's own custom formats are listed with the toggle off, and
+    // every format the profile itself carries has its own row either way.
+    // Used to decide the toggle for rules saved before it was persisted.
+    _selectedCFsNeedCustomize(list) {
+      if (!Array.isArray(list) || list.length === 0) return false;
+      const inProfile = this._profileCFIds();
+      for (const tid of list) {
+        if (!tid || tid.startsWith('custom:')) continue;
+        if (!inProfile.has(tid)) return true;
+      }
+      return false;
+    },
+
+    // Does this list of excluded trash_ids need Customize to be visible?
+    // With Customize off the user can still turn a whole cf-group off and
+    // toggle any optional CF, and both of those emit entries here. Only an
+    // exclusion the editor cannot express that way needs the toggle: a
+    // required group member whose group is still on, or a CF the profile
+    // carries directly. Those are the lock-icon cases, and the lock is
+    // Customize-only.
+    //
+    // "Group switched off" is derived from the list itself - every
+    // required/default-on member present - which is exactly the set
+    // getExcludedCFIds emits for a group toggle and the same test
+    // applyRuleStateToEditor uses to infer the group flag. Deriving it here
+    // rather than reading the live `__grp_` flags keeps the answer
+    // independent of restore order: the two restore paths write those flags
+    // at different points, and resyncProfile's `groupWasSynced` can read a
+    // group as on from the last sync's CF snapshot even though the user has
+    // since switched it off, which forced Customize on for a rule whose only
+    // change was a disabled group.
+    _excludedCFsNeedCustomize(list) {
+      if (!Array.isArray(list) || list.length === 0) return false;
+      const detail = this.profileDetail?.detail;
+      if (!detail) return true; // can't tell a lock from a group opt-out
+      const excluded = new Set(list.filter(Boolean));
+      const formatItems = new Set();
+      for (const fi of (detail.formatItemNames || [])) {
+        if (fi.trashId) formatItems.add(fi.trashId);
+      }
+      const groups = detail.trashGroups || [];
+      const groupOff = new Map();
+      for (const group of groups) {
+        const defaults = (group.cfs || [])
+          .filter(cf => cf.required || cf.default)
+          .map(cf => cf.trashId);
+        groupOff.set(group.name, !!group.defaultEnabled
+          && defaults.length > 0
+          && defaults.every(tid => excluded.has(tid)));
+      }
+      for (const tid of excluded) {
+        if (formatItems.has(tid)) return true;
+        let requiredSomewhere = false;
+        let everyGroupOff = true;
+        for (const group of groups) {
+          const member = (group.cfs || []).find(cf => cf.trashId === tid);
+          if (!member || !member.required) continue;
+          requiredSomewhere = true;
+          // A CF required in two groups needs Customize as soon as ONE of
+          // them is still on: the row renders there, and the only way to
+          // put it back is the lock icon.
+          if (!groupOff.get(group.name)) everyGroupOff = false;
+        }
+        if (requiredSomewhere && !everyGroupOff) return true;
+      }
+      return false;
+    },
+
     // Excluded CFs: trash_ids the user has opted OUT of from the TRaSH
     // defaults set. Sent alongside selectedCFs in the sync payload so
     // the engine zeroes them in the Arr profile even when they were
@@ -271,9 +359,11 @@ export default {
         //      CUSTOM in Sync Preview's sub-nav)
         //   3. Custom-category groups (g.isCustom + parent category
         //      "Custom") → push each user-cat as its own group, named
-        //      "[Custom] <user-cat>" so spGroupBySection clusters them
-        //      under a CUSTOM section in Sync Preview's sub-nav. This
-        //      matches the Custom Formats browse view's sidebar nesting.
+        //      "[My custom formats] <user-cat>" so spGroupBySection
+        //      clusters them under a MY CUSTOM FORMATS section in Sync
+        //      Preview's sub-nav. This matches the Custom Formats browse
+        //      view's sidebar nesting, and the label matches the tab name
+        //      the same groups get when Customize is off.
         const groups = []; // { name, category, cfs[] }
         const ungrouped = [];
         const customGroups = [];
@@ -283,8 +373,14 @@ export default {
           } else if (g.isCustom && c.category === 'Custom') {
             if ((g.cfs || []).length > 0) {
               customGroups.push({
-                name: `[Custom] ${g.name}`,
+                name: `[My custom formats] ${g.name}`,
                 category: 'Custom',
+                // Explicit marker. Filtering on the display category would
+                // key on a label: AllCFsCategorized buckets user customs
+                // under a `__custom__` sentinel precisely so a TRaSH
+                // category named "Custom" cannot collide, and matching the
+                // friendly label here would re-open that door.
+                isCustomGroup: true,
                 cfs: g.cfs,
               });
             }
@@ -875,6 +971,11 @@ export default {
       // "required+default" (not "every CF") matches what getExcludedCFIds
       // emits when disabling a default-on group: optional members the
       // user never opted into aren't in excludedCFs even when group off.
+      // A member in selectedCFs vetoes the group-off read: in an exclusive
+      // group ("only enable one"), switching away from the default member
+      // excludes it and selects another, which looks identical to a group
+      // the user turned off. Reading that as off hides the member the user
+      // actually picked.
       for (const g of (detail.trashGroups || [])) {
         const cfTids = (g.cfs || []).map(cf => cf.trashId);
         const anyInSelected = cfTids.some(tid => ruleSelSet.has(tid));
@@ -883,7 +984,7 @@ export default {
         const grpKey = '__grp_' + g.name;
         if (!g.defaultEnabled && anyInSelected) {
           selOpt[grpKey] = true;
-        } else if (g.defaultEnabled && allDefaultsExcluded) {
+        } else if (g.defaultEnabled && allDefaultsExcluded && !anyInSelected) {
           selOpt[grpKey] = false;
         }
       }
@@ -949,14 +1050,22 @@ export default {
       // reads as "my notes are gone" - first reported bug).
       this.pdDescription = rule.description || '';
       this.pdNotesExpanded = !!(rule.description || '').trim();
-      // Customize unlocks CF editing (scores, extra and excluded CFs). The
-      // basics row (language, scores, upgrades, cutoff, qualities) is
-      // editable without it, so only CF-level customizations switch it on.
-      const cfCustomized = Object.keys(extras).length > 0
-        || Object.keys(this.cfScoreOverrides || {}).length > 0
-        || (rule.selectedCFs && rule.selectedCFs.length > 0)
-        || (rule.excludedCFs && rule.excludedCFs.length > 0);
-      if (cfCustomized) {
+      // Customize unlocks the TRaSH-Guides formats that are not part of
+      // this profile, and excluding a format it includes. Scores, the
+      // user's own custom formats and the basics row are editable without
+      // it, so none of those switch it on.
+      // The stored toggle is a FLOOR, not an override: a saved `true` opens
+      // in Customize mode because the user asked for it, but a saved `false`
+      // still has to yield to state that only Customize can show. Paths
+      // outside the editor can add such state without touching the toggle -
+      // handleAddCFToRule appends an out-of-profile CF to the rule when the
+      // user picks "Add to Arr -> To profile" from the Custom Formats
+      // browser - and a CF that syncs while no row for it exists anywhere in
+      // the editor is the exact failure the inference guards against.
+      if (rule.customizeEnabled === true
+          || this._selectedCFsNeedCustomize(rule.selectedCFs)
+          || this._selectedCFsNeedCustomize(Object.keys(extras))
+          || this._excludedCFsNeedCustomize(rule.excludedCFs)) {
         this.pdOverridesEnabled = true;
       }
     },
@@ -1776,7 +1885,11 @@ export default {
         // subtracts these from `ComputeTrashDefaults ∪ selectedCFs` so the
         // resulting Arr profile reflects the user's opt-out choices even
         // when TRaSH later moves the CFs between formatItems and cf-groups.
-        excludedCFs: this.getExcludedCFIds()
+        excludedCFs: this.getExcludedCFIds(),
+        // Editor state, carried so reopening this rule restores the
+        // "Customize this profile" toggle the user left it on (or off).
+        // The sync engine ignores it.
+        customizeEnabled: !!this.pdOverridesEnabled
       };
       if (this.syncForm.importedProfileId) {
         body.importedProfileId = this.syncForm.importedProfileId;
@@ -2255,6 +2368,9 @@ export default {
             // - without this the spread of ...existingRule would
             // resurrect the old description.
             description: syncBody.description !== undefined ? syncBody.description : '',
+            // Same echo reason: existingRule was loaded before this sync,
+            // so its toggle can be stale. Send what the editor just synced.
+            customizeEnabled: syncBody.customizeEnabled,
           };
           try {
             await fetch(`/api/auto-sync/rules/${existingRule.id}`, {
@@ -2348,6 +2464,7 @@ export default {
         qualityStructure: syncBody.qualityStructure || null,
         keepArrCFIDs: (Array.isArray(syncBody.keepArrCFIDs) ? syncBody.keepArrCFIDs : existingRule.keepArrCFIDs) || null,
         description: syncBody.description !== undefined ? syncBody.description : '',
+        customizeEnabled: syncBody.customizeEnabled,
       };
       this.debugLog('UI', `Save (rule-only): "${profile.name}" → ${inst.name}`);
       this.savingRule = true;
@@ -2962,10 +3079,18 @@ export default {
           // even after the user re-enables the group, which is the
           // exact bug pdToggleGroup-off + the rehydrate's groupOffCFs
           // path are designed to avoid. Mirror that pass here.
+          // A member in the rule's selectedCFs vetoes this: in an exclusive
+          // group ("only enable one"), switching away from the default member
+          // excludes it and selects another, which looks identical to a group
+          // the user turned off. Skipping the per-CF writes there dropped the
+          // member the user picked back to the TRaSH default, and the next
+          // sync then zeroed its score in Arr.
           const defaultsInThisGroup = group.cfs.filter(cf => !cf.required && cf.default).map(cf => cf.trashId);
+          const anyMemberSelected = group.cfs.some(cf => effectiveSelectedCFs[cf.trashId]);
           const groupOffViaExcluded = group.defaultEnabled
             && defaultsInThisGroup.length > 0
-            && defaultsInThisGroup.every(tid => excludedCFs.has(tid));
+            && defaultsInThisGroup.every(tid => excludedCFs.has(tid))
+            && !anyMemberSelected;
           for (const cf of group.cfs) {
             if (cf.required) continue;
             if (groupOffViaExcluded) {
@@ -3032,10 +3157,9 @@ export default {
       const additionalCFsSource = (ruleForRestore && Array.isArray(ruleForRestore.selectedCFs))
         ? Object.fromEntries(ruleForRestore.selectedCFs.map(id => [id, true]))
         : (sh.selectedCFs || {});
-      // Set when an Additional CF (outside the profile's groups) is restored,
-      // including from sync history for an orphaned rule. Additional CF is
-      // behind Customize, so it must switch Customize on or those CFs would
-      // sync while hidden.
+      // Set when a restored Additional CF is one that Customize gates - a
+      // TRaSH format from outside this profile, including from sync history
+      // for an orphaned rule. Without this the CF would sync while hidden.
       let additionalCFsRestored = false;
       if (additionalCFsSource && Object.keys(additionalCFsSource).length > 0) {
         const inProfileGroups = new Set();
@@ -3048,9 +3172,11 @@ export default {
           // Don't overwrite a Phase 2c lock or other explicit false.
           if (selWithExtras[tid] === false) continue;
           selWithExtras[tid] = true;
-          additionalCFsRestored = true;
         }
         this.selectedOptionalCFs = selWithExtras;
+        // Only a TRaSH format from outside the profile needs Customize; the
+        // user's own custom formats are listed without it.
+        additionalCFsRestored = this._selectedCFsNeedCustomize(Object.keys(additionalCFsSource));
       }
       // Phase 2c - restore required-CF exclusions from rule.ExcludedCFs.
       // The optional-CF restore loop above intentionally skips required
@@ -3083,9 +3209,10 @@ export default {
       }
       // Restore overrides. ruleData prefers the rule (saved intent) over
       // sync history, so Save-only edits are visible on reopen. Values are
-      // written to pdOverrides; pdOverridesEnabled flips on at the end only
-      // for CF-level customizations (scores, extras, excluded CFs), since the
-      // basics row is editable without Customize.
+      // written to pdOverrides; cfOverride collects the restored state that
+      // needs Customize to be visible at all (TRaSH formats from outside
+      // the profile, excluded formats). The basics row, scores and the
+      // user's own custom formats are editable without Customize.
       let cfOverride = false;
       if (ruleData.overrides) {
         const ov = ruleData.overrides;
@@ -3137,8 +3264,9 @@ export default {
           }
         }
       }
+      // Scores are editable with Customize off, so a restored score
+      // override does not switch the toggle on any more.
       this.cfScoreOverrides = baseOverrides;
-      if (Object.keys(baseOverrides).length > 0) cfOverride = true;
 
       // Restore quality overrides - prefer structure override over legacy flat map.
       // qualityOverrideActive is the Quality Items editor modal-open flag and
@@ -3165,7 +3293,7 @@ export default {
       // Apply the Extra CFs computed above.
       if (Object.keys(extras).length > 0) {
         this.extraCFs = extras;
-        cfOverride = true;
+        if (this._selectedCFsNeedCustomize(Object.keys(extras))) cfOverride = true;
         // Sync Preview's Additional CF picker + Profile overview's
         // Additional CF + Diffs bucket 3 all read selectedOptionalCFs
         // (NOT extraCFs) to decide whether an extra is activated.
@@ -3187,30 +3315,12 @@ export default {
         const appType = this.profileDetail?.instance?.type;
         if (appType) this.loadExtraCFList();
       }
-      // Phase 2c - excludedCFs (required opt-outs + default-on opt-outs)
-      // counts as customization. Without this, a rule whose only edit is
-      // an excluded required CF reopens with Customize off and the
-      // "Customize this profile" CTA - even though the rule clearly IS
-      // customized (Sync Rules pill correctly shows N excluded). Mirror
-      // backend ComputeRuleCustomizations bucket 4 / frontend
-      // pdExcludedCFCount: count entries that resolve to default CFs.
-      //
-      // Defensive: if profileDetail.detail hasn't loaded yet (async race
-      // - shouldn't happen since resyncProfile awaits openProfileDetail,
-      // but cheap to guard), conservatively flip cfOverride=true so the
-      // rule's saved-customization state isn't lost. The downstream
-      // diff/badge counters will reconcile correctly once detail loads.
-      if (Array.isArray(ruleData.excludedCFs) && ruleData.excludedCFs.length > 0) {
-        const detail = this.profileDetail?.detail;
-        if (!detail) {
-          cfOverride = true;
-        } else {
-          const defaults = this.computeTrashDefaults();
-          for (const tid of ruleData.excludedCFs) {
-            if (defaults.has(tid)) { cfOverride = true; break; }
-          }
-        }
-      }
+      // Phase 2c - whether the restored exclusions need Customize is decided
+      // at the end of this restore, once the group flags are in place, so
+      // _excludedCFsNeedCustomize can tell a lock-icon opt-out (needs
+      // Customize) from a group or optional-CF toggle (does not). It also
+      // guards the async race where profileDetail.detail hasn't loaded:
+      // it keeps Customize on rather than hide a lock.
       // Restore behavior - prefer rule's behavior (current intent) over sync
       // history (last applied).
       if (ruleData.behavior) {
@@ -3227,17 +3337,16 @@ export default {
       // customization was restored, so CF state that will sync is never
       // hidden behind a locked Customize. Settings and quality changes show
       // in the basics row without it.
-      // Also flip on when the rule carries selectedCFs OR excludedCFs -
-      // Additional CF opt-ins (Flux/DD+/HDR for profiles whose default
-      // scope excludes them) live in selectedCFs, and Phase 2c lock-clicks
-      // live in excludedCFs. Both count as user customizations even when
-      // basics/quality/score overrides are absent. Mirrors the equivalent
-      // gate in applyRuleStateToEditor (~line 933).
-      const hasSelectedCFs = ruleForRestore && Array.isArray(ruleForRestore.selectedCFs) && ruleForRestore.selectedCFs.length > 0;
-      const hasExcludedCFs = ruleForRestore && Array.isArray(ruleForRestore.excludedCFs) && ruleForRestore.excludedCFs.length > 0;
-      // Only CF-level customizations switch Customize on; the basics row is
-      // editable without it (see applyRuleStateToEditor).
-      if (cfOverride || hasSelectedCFs || hasExcludedCFs || additionalCFsRestored) this.pdOverridesEnabled = true;
+      // The stored toggle is a FLOOR, not an override - see the matching
+      // gate in applyRuleStateToEditor. A saved `true` opens in Customize
+      // mode; a saved `false` still yields to restored state that only
+      // Customize can show, so nothing syncs from a row the editor hides.
+      const hasTrashExtras = this._selectedCFsNeedCustomize(ruleForRestore?.selectedCFs);
+      const hasExcludedCFs = this._excludedCFsNeedCustomize(ruleData.excludedCFs);
+      if (ruleForRestore?.customizeEnabled === true
+          || cfOverride || hasTrashExtras || hasExcludedCFs || additionalCFsRestored) {
+        this.pdOverridesEnabled = true;
+      }
       // Issue #52 - snapshot the just-restored state as the dirty-check
       // baseline. Anything the user changes after this point is an
       // unsaved edit that warrants a Stay/Discard prompt on navigation.
@@ -5488,6 +5597,10 @@ export default {
     // Used by: loadProfileDetail (fresh load), Back-link (leaving the view), pdResetAllOverrides.
     pdResetDetailState() {
       this.pdOverridesEnabled = false;
+      // Fresh open starts on Profile default. Without this, a tab that was
+      // active for the previous rule can stay selected for a rule where its
+      // button does not render, leaving a pane no tab points at.
+      this.spActiveTab = 'default';
       this.pdDescription = '';
       this.pdDescriptionPreview = false;
       this.pdNotesExpanded = false;
@@ -5575,6 +5688,12 @@ export default {
       const detail = this.profileDetail?.detail;
       if (detail) this.initSelectedCFs(detail);
       else this.selectedOptionalCFs = {};
+      // With Customize off the Additional CF tab narrows to the user's own
+      // custom formats, and its button hides when they have none. Bounce
+      // off the tab in that case so the user isn't left on an empty pane.
+      if (this.spActiveTab === 'additional' && !this.spShowAdditionalTab()) {
+        this.spActiveTab = 'default';
+      }
     },
 
     // Seed pdOverrides from a profile's TRaSH defaults (or global defaults if no profile).
@@ -5903,9 +6022,6 @@ export default {
     prefillOverridesFromCompare(comparison, arrQualities = null) {
       if (!comparison) return false;
       let anyOverride = false;
-      // CF-level differences (scores, extras) switch Customize on; settings
-      // and qualities live in the basics row, which is editable without it.
-      let cfOverride = false;
 
       // --- General settings overrides ---
       for (const sd of (comparison.settingsDiffs || [])) {
@@ -5978,14 +6094,12 @@ export default {
         if (!fi.exists || fi.scoreMatch) continue;
         this.cfScoreOverrides[fi.trashId] = fi.currentScore;
         anyOverride = true;
-        cfOverride = true;
       }
       for (const group of (comparison.groups || [])) {
         for (const cf of group.cfs) {
           if (!cf.exists || cf.scoreMatch) continue;
           this.cfScoreOverrides[cf.trashId] = cf.currentScore;
           anyOverride = true;
-          cfOverride = true;
         }
       }
 
@@ -6032,6 +6146,9 @@ export default {
       const extras = { ...(this.extraCFs || {}) };
       const selOpt = { ...(this.selectedOptionalCFs || {}) };
       const unresolved = [];
+      // Only an extra that Customize gates counts here: a TRaSH format from
+      // outside this profile. The user's own custom formats are listed with
+      // Customize off, so adopting one must not force the toggle on.
       let resolvedExtras = false;
       for (const ecf of (comparison.extraCFs || [])) {
         const tid = nameToTrashId[ecf.name];
@@ -6044,7 +6161,7 @@ export default {
           // enabled" counter also reads from this map, so the user
           // sees "0 of N enabled" while the CF is actually active.
           selOpt[tid] = true;
-          resolvedExtras = true;
+          if (this._selectedCFsNeedCustomize([tid])) resolvedExtras = true;
         } else {
           unresolved.push({ arrCFID: ecf.format, name: ecf.name, currentScore: ecf.score });
         }
@@ -6053,16 +6170,15 @@ export default {
       this.selectedOptionalCFs = selOpt;
       this._compareArrOnlyExtras = unresolved;
 
-      // Customize-this-profile must flip on whenever the comparison
-      // surfaced a CF-level divergence the user can act on: custom scores,
-      // resolved Additional CFs (TRaSH-guide or freshly-imported customs)
-      // and unresolved Arr-only CFs alike. Settings and quality differences
-      // show in the basics row, which is editable without Customize. Without this,
-      // the editor opens in non-customize mode and the Additional CFs
-      // section stays hidden, so the user thinks the import / extra
-      // didn't take. The save engine still emits extras regardless of
-      // the toggle, but the editor UI gates visibility on it.
-      if (cfOverride || resolvedExtras || (this._compareArrOnlyExtras && this._compareArrOnlyExtras.length > 0)) {
+      // Customize must flip on whenever the comparison surfaced divergence
+      // the editor can only show with it on: a TRaSH format from outside
+      // this profile, or an Arr-only CF we could not resolve. Scores are not
+      // in that set any more - they are editable either way - so adopting a
+      // changed score no longer greets the user with the whole catalogue.
+      // Settings and quality differences show in the basics row, also
+      // editable without Customize. The save engine emits extras regardless
+      // of the toggle; this is purely about visibility.
+      if (resolvedExtras || (this._compareArrOnlyExtras && this._compareArrOnlyExtras.length > 0)) {
         this.pdOverridesEnabled = true;
       }
       return anyOverride;

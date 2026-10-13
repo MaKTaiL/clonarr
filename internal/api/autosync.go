@@ -29,6 +29,10 @@ func autoSyncRuleEquivalent(a, b core.AutoSyncRule) bool {
 		r.UpdatedAt = ""
 		r.PriorAvailableGroups = nil
 		r.OrphanedAt = ""
+		// Editor state, not sync input: flipping "Customize this profile"
+		// on its own changes nothing in Arr, so it must not light up the
+		// rule's "unsynced changes" indicator.
+		r.CustomizeEnabled = nil
 		return r
 	}
 	return reflect.DeepEqual(clear(a), clear(b))
@@ -228,6 +232,13 @@ func (s *Server) handleUpdateAutoSyncRule(w http.ResponseWriter, r *http.Request
 				existing := cfg.AutoSync.Rules[i]
 				rule.LastSyncCommit = existing.LastSyncCommit
 				rule.LastSyncTime = existing.LastSyncTime
+				// This handler replaces the rule wholesale, so a caller
+				// that doesn't own the profile editor's Customize toggle
+				// would wipe it. Same nil-means-leave-it-alone contract
+				// the apply handler follows.
+				if rule.CustomizeEnabled == nil {
+					rule.CustomizeEnabled = existing.CustomizeEnabled
+				}
 				switch {
 				case saveOnly && !autoSyncRuleEquivalent(rule, existing):
 					rule.UpdatedAt = time.Now().Format(time.RFC3339)
