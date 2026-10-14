@@ -2277,11 +2277,18 @@ func resolveQualityItems(trashItems []QualityItem, qualityByName map[string]*arr
 				nested[i], nested[j] = nested[j], nested[i]
 			}
 			if len(nested) > 0 {
+				// Sizes go on the group row too, not just its members:
+				// Sonarr v5 stores them on both, and preserveQualitySizes
+				// only fills fields we leave empty, so an omitted group row
+				// would quietly keep whatever the instance already had.
 				items = append(items, arr.ArrQualityItem{
-					ID:      groupID,
-					Name:    ti.Name,
-					Items:   nested,
-					Allowed: ti.Allowed,
+					ID:            groupID,
+					Name:          ti.Name,
+					Items:         nested,
+					Allowed:       ti.Allowed,
+					MinSize:       ti.MinSize,
+					MaxSize:       ti.MaxSize,
+					PreferredSize: ti.PreferredSize,
 				})
 				groupID++
 			} else {

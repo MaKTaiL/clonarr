@@ -110,8 +110,12 @@ type QualityItem struct {
 	// Nothing populates these yet: the guide points a profile at a whole size
 	// set by trash_id rather than carrying numbers itself, and no profile
 	// carries that reference so far. resolveQualityItems carries these to the
-	// Arr body and UpdateProfile leaves an explicit value alone, so resolving
-	// the reference is all that step needs.
+	// Arr body for plain qualities, group rows and group members alike, and
+	// UpdateProfile leaves an explicit value alone, so resolving the
+	// reference is all that step needs on the backend. The editor does not
+	// round-trip them yet: qsForBackend and the rule-import path rebuild a
+	// quality item from name/allowed/items only, so the UI side has to be
+	// wired up in the same step.
 	MinSize       *float64 `json:"minSize,omitempty"`
 	MaxSize       *float64 `json:"maxSize,omitempty"`
 	PreferredSize *float64 `json:"preferredSize,omitempty"`

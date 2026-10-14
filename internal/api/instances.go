@@ -652,7 +652,17 @@ func (s *Server) handleInstanceProfileExport(w http.ResponseWriter, r *http.Requ
 	// Map quality items (Radarr API returns lowest priority first, reverse for TRaSH format)
 	var qualities []core.QualityItem
 	for _, qi := range profile.Items {
-		q := core.QualityItem{Allowed: qi.Allowed}
+		// MinSize/MaxSize/PreferredSize are only populated by the versions
+		// that keep quality sizes on the profile (Sonarr v5 and later). They
+		// have to come along or exporting a profile from such an instance
+		// stores no sizes, and importing it elsewhere silently loses them.
+		// profile is local to this handler, so sharing the pointers is safe.
+		q := core.QualityItem{
+			Allowed:       qi.Allowed,
+			MinSize:       qi.MinSize,
+			MaxSize:       qi.MaxSize,
+			PreferredSize: qi.PreferredSize,
+		}
 		if qi.Quality != nil {
 			q.Name = qi.Quality.Name
 		} else if qi.Name != "" {

@@ -159,9 +159,11 @@ func TestCloneQualityItemsKeepsSizes(t *testing.T) {
 		t.Error("deep copy shares the pointer with the original")
 	}
 
-	// Mutating the copy must not reach the original.
+	// Mutating the copy must not reach the original. Compared against a
+	// literal, not against min: min is the variable src points at, so an
+	// aliased copy would change both sides and the check would pass.
 	*out[0].MinSize = 7
-	if *src[0].MinSize != min {
+	if *src[0].MinSize != 2.0 {
 		t.Errorf("original mutated through the copy: %v", *src[0].MinSize)
 	}
 }
