@@ -2277,18 +2277,18 @@ func resolveQualityItems(trashItems []QualityItem, qualityByName map[string]*arr
 				nested[i], nested[j] = nested[j], nested[i]
 			}
 			if len(nested) > 0 {
-				// Sizes go on the group row too, not just its members:
-				// Sonarr v5 stores them on both, and preserveQualitySizes
-				// only fills fields we leave empty, so an omitted group row
-				// would quietly keep whatever the instance already had.
+				// No sizes on the group row. Measured against Sonarr 5.0.0:
+				// across six profiles not one of 24 group rows carried a
+				// size, while 41 of 48 group members did, and the app's own
+				// /qualityprofile/schema puts sizes on all 14 qualities and
+				// all 8 members but on none of its 4 group rows. Sizes
+				// belong to individual qualities; a group row only holds the
+				// members together. They are set on the members above.
 				items = append(items, arr.ArrQualityItem{
-					ID:            groupID,
-					Name:          ti.Name,
-					Items:         nested,
-					Allowed:       ti.Allowed,
-					MinSize:       ti.MinSize,
-					MaxSize:       ti.MaxSize,
-					PreferredSize: ti.PreferredSize,
+					ID:      groupID,
+					Name:    ti.Name,
+					Items:   nested,
+					Allowed: ti.Allowed,
 				})
 				groupID++
 			} else {

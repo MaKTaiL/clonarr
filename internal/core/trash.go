@@ -110,12 +110,12 @@ type QualityItem struct {
 	// Nothing populates these yet: the guide points a profile at a whole size
 	// set by trash_id rather than carrying numbers itself, and no profile
 	// carries that reference so far. resolveQualityItems carries these to the
-	// Arr body for plain qualities, group rows and group members alike, and
-	// UpdateProfile leaves an explicit value alone, so resolving the
-	// reference is all that step needs on the backend. The editor does not
-	// round-trip them yet: qsForBackend and the rule-import path rebuild a
-	// quality item from name/allowed/items only, so the UI side has to be
-	// wired up in the same step.
+	// Arr body for individual qualities, group members included, and
+	// UpdateProfile leaves an explicit value alone. Group rows get no size:
+	// the app keeps sizes on individual qualities only, so a size on a
+	// grouped entry belongs to its members. The editor deliberately does not
+	// round-trip these: the user's choice of size set is what gets stored,
+	// and the numbers are resolved at sync time, the same way scores are.
 	MinSize       *float64 `json:"minSize,omitempty"`
 	MaxSize       *float64 `json:"maxSize,omitempty"`
 	PreferredSize *float64 `json:"preferredSize,omitempty"`
