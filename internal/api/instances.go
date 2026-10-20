@@ -1471,7 +1471,7 @@ func (s *Server) handleSyncQualitySizes(w http.ResponseWriter, r *http.Request) 
 			"status":         "skipped",
 			"count":          0,
 			"perProfileOnly": true,
-			"message":        "This version of Sonarr stores quality sizes on each quality profile instead of in one shared list, so nothing was written here. Set them per profile in Sonarr. Clonarr keeps whatever you set there when it syncs a profile.",
+			"message":        "This version of Sonarr stores quality sizes on each quality profile instead of in one shared list, so nothing was written here. Set them per profile instead: open the profile under Profiles and use its Quality size tab.",
 		})
 		return
 	}
@@ -1661,7 +1661,7 @@ func (s *Server) handleSaveQSAutoSync(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, map[string]any{
 				"status":         "skipped",
 				"perProfileOnly": true,
-				"message":        "This version of Sonarr stores quality sizes on each quality profile instead of in one shared list, so nothing was written here. Set them per profile in Sonarr. Clonarr keeps whatever you set there when it syncs a profile.",
+				"message":        "This version of Sonarr stores quality sizes on each quality profile instead of in one shared list, so nothing was written here. Set them per profile instead: open the profile under Profiles and use its Quality size tab.",
 			})
 			return
 		}

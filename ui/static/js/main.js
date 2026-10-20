@@ -20,6 +20,7 @@ import naming from './features/naming.js';
 import navigation from './features/navigation.js';
 import notifications from './features/notifications.js';
 import profileBuilder from './features/profile-builder.js';
+import profileQualitySizes from './features/profile-quality-sizes.js';
 import profiles from './features/profiles.js';
 import qualitySizes from './features/quality-sizes.js';
 import rulePortability from './features/rule-portability.js';
@@ -43,6 +44,7 @@ const featureModules = [
   maintenance,
   backupRestore,
   profiles,
+  profileQualitySizes,
   trashProfileDiscovery,
   scoring,
   cfGroupBuilder,

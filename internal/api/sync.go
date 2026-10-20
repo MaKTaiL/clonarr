@@ -533,8 +533,15 @@ func (s *Server) handleApply(w http.ResponseWriter, r *http.Request) {
 				cfg.AutoSync.Rules[i].QualityStructure = req.QualityStructure
 				cfg.AutoSync.Rules[i].Behavior = req.Behavior
 				cfg.AutoSync.Rules[i].Overrides = req.Overrides
-				cfg.AutoSync.Rules[i].QualitySizeSource = req.QualitySizeSource
-				cfg.AutoSync.Rules[i].QualitySizeOverrides = req.QualitySizeOverrides
+				// Only callers that own the Quality size tab send these.
+				// Compare apply, rollback and Sync All do not, and must not
+				// reset a rule's size source to off by omission.
+				if req.QualitySizeSource != "" {
+					cfg.AutoSync.Rules[i].QualitySizeSource = req.QualitySizeSource
+				}
+				if req.QualitySizeOverrides != nil {
+					cfg.AutoSync.Rules[i].QualitySizeOverrides = req.QualitySizeOverrides
+				}
 				// Editor state, not sync input. Only callers that actually
 				// own the toggle send it; everyone else leaves it as it was.
 				if req.CustomizeEnabled != nil {

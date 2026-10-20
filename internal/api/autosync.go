@@ -239,6 +239,18 @@ func (s *Server) handleUpdateAutoSyncRule(w http.ResponseWriter, r *http.Request
 				if rule.CustomizeEnabled == nil {
 					rule.CustomizeEnabled = existing.CustomizeEnabled
 				}
+				// Same contract for the quality size choice. Only the
+				// profile editor's Quality size tab owns these, so a caller
+				// that does not send them (the enabled toggle, the post-sync
+				// echo, Compare's keepArrCFIDs update) must leave them alone
+				// rather than reset the rule to off. Turning it off is an
+				// explicit "off", which is a value and survives this.
+				if rule.QualitySizeSource == "" {
+					rule.QualitySizeSource = existing.QualitySizeSource
+				}
+				if rule.QualitySizeOverrides == nil {
+					rule.QualitySizeOverrides = existing.QualitySizeOverrides
+				}
 				switch {
 				case saveOnly && !autoSyncRuleEquivalent(rule, existing):
 					rule.UpdatedAt = time.Now().Format(time.RFC3339)

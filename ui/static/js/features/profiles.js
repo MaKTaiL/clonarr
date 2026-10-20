@@ -865,6 +865,19 @@ export default {
       this.spActiveGroup = '__required';
       this.spActiveParent = null;
       this.spExpandedSection = null;
+      // Per-profile quality sizes start clean on every open.
+      // applyRuleStateToEditor fills them back in when a rule exists, and the
+      // tab reloads its rows for the new profile. Carrying the previous
+      // profile's rows over would show one profile's qualities under
+      // another's name.
+      this.pdQSSource = '';
+      this.pdQSOverrides = {};
+      this.pdQSRows = [];
+      this.pdQSPerProfile = false;
+      this.pdQSLoadedRuleId = null;
+      this.pdQSShowAll = false;
+      this.pdQSSaveSetName = '';
+      this._pdQSTouched = false;
 
       this.profileDetail = { instance: inst, profile: profile, detail: null };
       // Pre-load languages and quality presets for this instance (for override dropdowns)
@@ -1018,6 +1031,17 @@ export default {
         this.extraCFs = { ...(this.extraCFs || {}), ...extras };
         if (this.profileDetail?.instance?.type) this.loadExtraCFList();
       }
+      // Per-profile quality sizes. Only meaningful on the versions that keep
+      // sizes on the profile; the tab itself is hidden elsewhere, but the
+      // state is restored either way so saving a rule never drops it.
+      this.pdQSSource = rule.qualitySizeSource || '';
+      this.pdQSOverrides = { ...(rule.qualitySizeOverrides || {}) };
+      this._pdQSTouched = false;
+      // Load here rather than when the tab opens, because the tab button has
+      // to know whether to appear at all and that answer comes from the same
+      // call. One request, and it reads the live profile on the instance,
+      // which is what makes the "on the instance" column real.
+      this.pdQSLoad(true);
       // qualityOverrides + qualityStructure passthrough.
       if (rule.qualityStructure && rule.qualityStructure.length > 0) {
         this.qualityStructure = rule.qualityStructure.map(it => ({
@@ -1966,6 +1990,14 @@ export default {
         body.qualityStructure = this.qsForBackend();
       } else if (Object.keys(this.qualityOverrides).length > 0) {
         body.qualityOverrides = this.qualityOverrides;
+      }
+      // Per-profile quality sizes. Sent only when the user has actually
+      // chosen something: an unset source means off, and omitting the field
+      // tells the backend to leave whatever the rule already has rather than
+      // reset it, which is how every other partial writer behaves.
+      if (this.pdQSSource) body.qualitySizeSource = this.pdQSSource;
+      if (Object.keys(this.pdQSOverrides || {}).length > 0) {
+        body.qualitySizeOverrides = this.pdQSOverrides;
       }
       // Sync behavior rules
       if (this.syncForm.behavior) body.behavior = this.syncForm.behavior;

@@ -409,6 +409,31 @@
                   x-tt="'Reset every quality change back to the profile default.'">&#8634;</button>
         </template>
       </div>
+
+      <!-- Quality size - same idiom as Qualities above: a label, the current
+           state, and a button that opens the tab. Shown only where sizes
+           live on the profile. A rule sitting at Off also gets the app's
+           default set as a one-click action, so the common case is one
+           click and nothing is ever written behind the user. -->
+      <div class="sp-basics-item" x-show="pdQSShowTab()">
+        <span class="sp-basics-lbl">Quality size</span>
+        <button class="sp-basics-val sp-basics-quality-launcher"
+                @click="spActiveTab = 'quality-size'"
+                x-tt="'Set the min, preferred and max size per quality for this profile.'"
+                x-text="pdQSSummary()"></button>
+        <template x-if="(!pdQSSource || pdQSSource === 'off') && pdQSDefaultSet()">
+          <button class="qs-mode-btn"
+                  @click="pdQSSetSource(pdQSDefaultSet().value)"
+                  :x-tt="'Use the guide\'s ' + pdQSSetTitle(pdQSDefaultSet().name) + ' sizes for this profile.'"
+                  x-text="'Use ' + pdQSSetTitle(pdQSDefaultSet().name)"></button>
+        </template>
+        <template x-if="pdQSSource && pdQSSource !== 'off'">
+          <button class="sp-basics-reset"
+                  @click="pdQSReset()"
+                  aria-label="Turn quality sizes off for this profile"
+                  x-tt="'Stop writing sizes for this profile. Whatever the instance has stays as it is.'">&#8634;</button>
+        </template>
+      </div>
     </div>
 
     <!-- ===== Customizations summary strip =====
@@ -500,6 +525,20 @@
         </template>
       </button>
       <button class="sp-tab" :class="{ active: spActiveTab === 'overview' }" @click="spActiveTab = 'overview'">Profile overview</button>
+      <!-- Quality size - only on the versions that keep sizes on the quality
+           profile rather than in one shared list (Sonarr v5 and later). The
+           backend answers that from the shape of the instance's definition
+           list, so the gate is pdQSShowTab() and never a check for Sonarr:
+           an app-type gate would put this tab on Sonarr 4 where it cannot
+           work, and would miss the day Radarr moves the same way. -->
+      <button class="sp-tab"
+              x-show="pdQSShowTab()"
+              :class="{ active: spActiveTab === 'quality-size' }"
+              @click="spActiveTab = 'quality-size'; pdQSLoad(true)">Quality size
+        <template x-if="pdQSChangeCount() > 0">
+          <span class="sp-tab-count" x-text="pdQSChangeCount()"></span>
+        </template>
+      </button>
       <!-- Profile updates - TRaSH-source pending changes only. Shows when
            Profile Sync detection has found upstream TRaSH changes for
            this rule. Drift entries get their own sibling tab below.
@@ -1761,6 +1800,149 @@
          sync-this-rule flow as the row-level Update profile button.
          Drift entries (source="drift") live in the sibling Out of sync
          tab. -->
+    <!-- ===== Quality size tab =====
+         Sonarr v5 keeps the min / preferred / max per quality on the quality
+         profile instead of in the shared list under Media Management, so the
+         choice belongs here. One source for the profile, plus the user's own
+         numbers for individual qualities.
+
+         The rows are loaded once when the editor applies a rule, and
+         refreshed when the tab is clicked. Deliberately not an x-effect:
+         pdQSLoad writes the same state an effect would track as a
+         dependency, which re-enters. -->
+    <div class="sp-body" x-show="spActiveTab === 'quality-size'">
+      <div style="padding:16px 20px;max-width:1100px">
+
+        <template x-if="pdQSLoading">
+          <div style="font-size:13px;color:var(--text-muted)">Reading this profile's sizes…</div>
+        </template>
+
+        <template x-if="!pdQSLoading">
+          <div>
+            <!-- Where the numbers come from. The rest of the tab reacts to
+                 this, which is why it sits at the top. -->
+            <div class="card" style="padding:14px 16px;margin-bottom:14px">
+              <div style="font-size:13px;font-weight:600;color:var(--text-primary);margin-bottom:4px">Where these sizes come from</div>
+              <div style="font-size:12px;color:var(--text-muted);margin-bottom:10px">
+                Sizes apply to this profile only. A set that does not list a quality leaves that one as it is on the instance.
+              </div>
+              <div style="display:flex;flex-wrap:wrap;gap:6px;align-items:center">
+                <button class="qs-type-btn"
+                        :class="{ active: !pdQSSource || pdQSSource === 'off' }"
+                        @click="pdQSSetSource('off')"
+                        x-tt="'Write no sizes for this profile. Whatever the instance has stays as it is.'">Off</button>
+                <template x-for="set in pdQSSets" :key="set.value">
+                  <button class="qs-type-btn"
+                          :class="{ active: pdQSSource === set.value }"
+                          @click="pdQSSetSource(set.value)"
+                          :x-tt="(set.origin === 'user' ? 'Your own set, ' : 'From TRaSH-Guides, ') + set.qualities + ' qualities.'">
+                    <span x-text="set.origin === 'user' ? set.name : pdQSSetTitle(set.name)"></span>
+                    <template x-if="set.origin === 'guide' && set.name === pdQSDefaultSetType">
+                      <span style="color:var(--text-muted);font-weight:400"> · default</span>
+                    </template>
+                  </button>
+                </template>
+              </div>
+            </div>
+
+            <!-- Row list. Defaults to the qualities this profile allows: a
+                 guide profile like WEB-1080p allows 2 of 22, so listing
+                 everything would show 22 rows of inputs to set 2. A size on
+                 a quality the profile does not allow changes nothing,
+                 because a disallowed quality is never downloaded. -->
+            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;gap:12px">
+              <div style="font-size:12px;color:var(--text-muted)">
+                <span x-text="pdQSVisibleRows().length"></span> qualities shown
+                <template x-if="pdQSHiddenCount() > 0">
+                  <span x-text="', ' + pdQSHiddenCount() + ' hidden'"></span>
+                </template>
+              </div>
+              <button class="qs-mode-btn"
+                      @click="pdQSShowAll = !pdQSShowAll"
+                      x-tt="'Show every quality the instance knows about, including the ones this profile does not allow.'"
+                      x-text="pdQSShowAll ? 'Show only this profile\'s' : 'Show all qualities'"></button>
+            </div>
+
+            <div class="card" style="padding:10px 14px">
+              <div class="qs-row" style="border-bottom:1px solid var(--border-subtle);padding-bottom:6px;margin-bottom:4px">
+                <div class="qs-name" style="font-size:13px;color:var(--text-muted);font-weight:400">Quality</div>
+                <div style="font-size:13px;color:var(--text-muted);width:150px;flex-shrink:0" x-tt="'Min / preferred / max, as the instance has it now.'">On the instance</div>
+                <div style="font-size:13px;color:var(--text-muted);width:150px;flex-shrink:0" x-tt="'What Clonarr writes on the next sync.'">Will be written</div>
+                <div style="font-size:13px;color:var(--text-muted);flex:1;min-width:120px">Source</div>
+                <div style="font-size:13px;color:var(--text-muted);width:104px;flex-shrink:0;text-align:center" x-tt="'Auto follows the chosen set. Custom uses your own numbers for this one quality.'">Mode</div>
+              </div>
+
+              <template x-for="row in pdQSVisibleRows()" :key="row.quality">
+                <div>
+                  <div class="qs-row" :style="row.allowed ? '' : 'opacity:0.6'">
+                    <div class="qs-name">
+                      <span x-text="row.quality"></span>
+                      <template x-if="row.group">
+                        <span style="font-size:11px;color:var(--text-muted)" x-text="' · ' + row.group"></span>
+                      </template>
+                      <template x-if="!row.allowed">
+                        <span style="font-size:11px;color:var(--text-muted)"> · not allowed</span>
+                      </template>
+                    </div>
+                    <div style="width:150px;flex-shrink:0;font-size:13px;color:var(--text-secondary)" x-text="pdQSCurrentText(row)"></div>
+                    <div style="width:150px;flex-shrink:0;font-size:13px;color:var(--text-primary)" x-text="pdQSResolvedText(row)"></div>
+                    <div style="flex:1;min-width:120px;font-size:12px;color:var(--text-muted)" x-text="pdQSRowSource(row)"></div>
+                    <div style="width:104px;flex-shrink:0;display:flex;justify-content:center">
+                      <div class="qs-mode-seg">
+                        <button class="qs-mode-seg-btn" :class="{ 'is-active': !pdQSIsCustom(row.quality) }"
+                                @click="if (pdQSIsCustom(row.quality)) pdQSToggleCustom(row)">Auto</button>
+                        <button class="qs-mode-seg-btn" :class="{ 'is-active': pdQSIsCustom(row.quality) }"
+                                @click="if (!pdQSIsCustom(row.quality)) pdQSToggleCustom(row)">Custom</button>
+                      </div>
+                    </div>
+                  </div>
+                  <!-- The three inputs only appear in Custom, so an
+                       untouched list stays a list rather than a form. -->
+                  <template x-if="pdQSIsCustom(row.quality)">
+                    <div style="display:flex;gap:10px;align-items:center;padding:2px 0 8px 12px">
+                      <template x-for="f in ['min','preferred','max']" :key="f">
+                        <label style="display:flex;align-items:center;gap:5px;font-size:12px;color:var(--text-muted)">
+                          <span x-text="f.charAt(0).toUpperCase() + f.slice(1)"></span>
+                          <input type="number" step="0.1" min="0"
+                                 style="width:84px;padding:3px 6px;font-size:12px"
+                                 :value="pdQSOverrideVal(row.quality, f)"
+                                 @change="pdQSSetOverrideVal(row.quality, f, $event.target.value)">
+                        </label>
+                      </template>
+                      <span style="font-size:11px;color:var(--text-muted)">MB per minute (Sonarr) or MB (Radarr), the same units the app shows</span>
+                    </div>
+                  </template>
+                </div>
+              </template>
+
+              <template x-if="pdQSVisibleRows().length === 0">
+                <div style="font-size:13px;color:var(--text-muted);padding:10px 0">
+                  Nothing to show. Try "Show all qualities".
+                </div>
+              </template>
+            </div>
+
+            <!-- Save the current table under a name so another profile can
+                 use it. A one-time copy, not a link: editing the set later
+                 does not reach back into this rule. -->
+            <div class="card" style="padding:12px 16px;margin-top:14px">
+              <div style="font-size:13px;font-weight:600;color:var(--text-primary);margin-bottom:4px">Save these sizes as a set</div>
+              <div style="font-size:12px;color:var(--text-muted);margin-bottom:8px">
+                Keeps the current numbers under a name you can pick for other profiles. This profile is pointed at the new set, and your per-quality values are folded into it.
+              </div>
+              <div style="display:flex;gap:8px;align-items:center">
+                <input type="text" placeholder="For example: My 1080p sizes"
+                       style="flex:1;max-width:320px;padding:5px 8px;font-size:13px"
+                       x-model="pdQSSaveSetName"
+                       @keydown.enter.prevent="pdQSSaveAsSet()">
+                <button class="qs-mode-btn" @click="pdQSSaveAsSet()">Save as set</button>
+              </div>
+            </div>
+          </div>
+        </template>
+      </div>
+    </div>
+
     <div class="sp-body" x-show="spActiveTab === 'updates'"
          x-data="{ get _u() { return pdPendingByCategoryTrash(); } }"
          style="grid-template-columns: 1fr">
