@@ -2113,7 +2113,11 @@ func friendlyArrErr(verb, cfName string, err error) string {
 // profile-level Arr call sites where there's no per-CF "name" to
 // include in the prefix — that case is what friendlyArrErr handles.
 func friendlyProfileErr(verb string, err error) string {
-	if extracted := extractArrErrorMessages(err.Error()); extracted != "" {
+	msg := err.Error()
+	if extracted := extractArrErrorMessages(msg); extracted != "" {
+		if arrServerFault(msg) {
+			return fmt.Sprintf("%s failed: Arr hit an internal error: %s. This is a fault in Arr rather than something in the rule, so the sync stays enabled and will retry.", verb, extracted)
+		}
 		return fmt.Sprintf("%s failed: %s", verb, extracted)
 	}
 	return fmt.Sprintf("%s: %v", verb, err)
@@ -2148,9 +2152,39 @@ func IsUserConfigError(s string) bool {
 	code := rest[:3]
 	switch code {
 	case "400", "409", "422":
+		// Status alone is not enough. Sonarr v5 answers at least one
+		// unhandled exception with 400 rather than 500: writing a quality
+		// profile whose minFormatScore exceeds the achievable score makes its
+		// validator take Max over an empty sequence when the instance has no
+		// custom formats, and it throws. Disabling the rule for that would be
+		// wrong twice over, since there is nothing in the rule to correct and
+		// the next sync would succeed as soon as a custom format exists.
+		if arrServerFault(s) {
+			return false
+		}
 		return true // bad request / conflict / unprocessable — user config
 	}
 	return false
+}
+
+// arrServerFault reports whether an Arr error body is an unhandled exception
+// rather than a validation rejection.
+//
+// The two shapes are distinct. A validation failure comes back as
+// FluentValidation entries carrying `errorMessage`. An unhandled exception
+// comes back as `{"message": "...", "description": "<.NET stack trace>"}`, and
+// a validation body never carries `description`. Requiring the exception
+// marker as well keeps this narrow: a body with a description but no stack
+// trace is still treated as the user's to fix.
+//
+// Erring toward "not user config" is the safe direction here. A rule left
+// enabled retries and surfaces the error; a rule disabled by mistake needs the
+// user to notice and turn it back on.
+func arrServerFault(body string) bool {
+	if !strings.Contains(body, `"description"`) {
+		return false
+	}
+	return strings.Contains(body, "Exception:") || strings.Contains(body, "System.")
 }
 
 // AllUserConfigErrors returns true when every entry in errs is a
@@ -2210,7 +2244,51 @@ func extractArrErrorMessages(s string) string {
 	if err := json.Unmarshal([]byte(body), &single); err == nil && single.ErrorMessage != "" {
 		return single.ErrorMessage
 	}
-	return ""
+	// Not a validation body. Arr answers an unhandled exception with
+	// `{"message": "...", "description": "<stack trace>"}`, and without this
+	// the user was shown the raw body: a truncated fragment of a .NET stack
+	// trace in a toast.
+	return arrGenericMessage(body)
+}
+
+// arrGenericMessage pulls the `message` field out of Arr's generic error body,
+// which is what Arr answers with when a request hits an unhandled exception
+// instead of a validation rule.
+//
+// Deliberately a string scan rather than a JSON parse. The callers receive a
+// body already truncated to 200 runes by the Arr client (see UpdateProfile),
+// and Arr pretty-prints this shape, so by the time it arrives it is cut
+// mid-value and will not unmarshal. `message` sits first and survives the cut;
+// `description` holds the stack trace, is what gets cut, and is not wanted.
+//
+// A quote inside the message would end the scan early, which shortens the text
+// rather than garbling it. Arr's messages are plain prose, so that has not come
+// up, and a short message beats a stack trace either way.
+func arrGenericMessage(body string) string {
+	const key = `"message"`
+	i := strings.Index(body, key)
+	if i < 0 {
+		return ""
+	}
+	rest := body[i+len(key):]
+	// open and close would shadow Go's builtins, hence the names.
+	openQuote := strings.IndexByte(rest, '"')
+	if openQuote < 0 {
+		return ""
+	}
+	// Only a colon and whitespace may sit between the key and its value,
+	// otherwise this matched something that merely contains the word.
+	for _, r := range rest[:openQuote] {
+		if r != ':' && r != ' ' && r != '\t' && r != '\n' && r != '\r' {
+			return ""
+		}
+	}
+	rest = rest[openQuote+1:]
+	closeQuote := strings.IndexByte(rest, '"')
+	if closeQuote < 0 {
+		return "" // truncated mid-message, nothing usable
+	}
+	return strings.TrimSpace(rest[:closeQuote])
 }
 
 // profileQualitySizes decides the per-profile quality sizes for one sync, or

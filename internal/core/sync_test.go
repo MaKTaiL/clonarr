@@ -456,12 +456,77 @@ func TestFriendlyProfileErr(t *testing.T) {
 		{"min-score", `HTTP 400: [{"propertyName":"","errorMessage":"Minimum Custom Format Score can never be satisfied","severity":"error"}]`, "update profile failed: Minimum Custom Format Score can never be satisfied"},
 		{"non-json", `connection refused`, "update profile: connection refused"},
 		{"empty-json", `HTTP 400: []`, "update profile: HTTP 400: []"},
+		// An unhandled exception is named as Arr's fault, because the user has
+		// nothing to change and the rule stays enabled.
+		{"v5 server fault", v5ServerFault, "update profile failed: Arr hit an internal error: Sequence contains no elements. This is a fault in Arr rather than something in the rule, so the sync stays enabled and will retry."},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			got := friendlyProfileErr("update profile", &stringErr{c.in})
 			if got != c.want {
 				t.Errorf("friendlyProfileErr(%q): got %q, want %q", c.in, got, c.want)
+			}
+		})
+	}
+}
+
+// v5ServerFault is the exact error string clonarr builds when Sonarr v5 hits
+// its own validator bug: writing a quality profile whose minFormatScore
+// exceeds the achievable score makes the validator take Max over an empty
+// sequence when the instance has no custom formats, and it throws. Captured
+// from sonarr-v5-test 5.0.0.2569 and run through the same 200-rune truncation
+// the Arr client applies, which is why the JSON is cut mid-value and will not
+// parse. Sonarr 4 validates properly and answers with a FluentValidation
+// message instead, covered by the min-score case above.
+const v5ServerFault = `update profile: HTTP 400: {
+  "message": "Sequence contains no elements",
+  "description": "System.InvalidOperationException: Sequence contains no elements\n   at System.Linq.ThrowHelper.ThrowNoElementsException()\n   at Syste...`
+
+// TestArrGenericMessage covers Arr's non-validation error body. Before this,
+// extraction returned nothing for it and the user was shown the raw truncated
+// body: a fragment of a .NET stack trace in a toast.
+func TestArrGenericMessage(t *testing.T) {
+	cases := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{"truncated pretty-printed body", v5ServerFault, "Sequence contains no elements"},
+		{"compact body", `HTTP 400: {"message":"Something broke","description":"System.Exception: ..."}`, "Something broke"},
+		{"validation body has no message field", `HTTP 400: [{"errorMessage":"Minimum Custom Format Score can never be satisfied"}]`, "Minimum Custom Format Score can never be satisfied"},
+		{"no message field at all", `HTTP 500: {"description":"nope"}`, ""},
+		{"message cut mid-value yields nothing rather than a fragment", `HTTP 400: {"message":"Sequence contains no ele...`, ""},
+		{"a word that merely contains message is not the field", `HTTP 400: {"errorMessageDetail":"x","other":"y"}`, ""},
+		{"non-json", `connection refused`, ""},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := extractArrErrorMessages(c.in); got != c.want {
+				t.Errorf("extractArrErrorMessages(%q) = %q, want %q", c.in, got, c.want)
+			}
+		})
+	}
+}
+
+// TestArrServerFault pins the line between a validation rejection, which the
+// user can fix in their rule, and an unhandled exception, which they cannot.
+func TestArrServerFault(t *testing.T) {
+	cases := []struct {
+		name string
+		in   string
+		want bool
+	}{
+		{"v5 validator crash", v5ServerFault, true},
+		{"compact exception body", `HTTP 400: {"message":"x","description":"System.Exception: boom"}`, true},
+		{"fluent validation array", `HTTP 400: [{"propertyName":"","errorMessage":"Minimum Custom Format Score can never be satisfied","severity":"error"}]`, false},
+		{"description without an exception stays the user's to fix", `HTTP 400: {"message":"Bad name","description":"Pick another name"}`, false},
+		{"detailedDescription must not match", `HTTP 400: [{"errorMessage":"nope","detailedDescription":"System.Exception: x"}]`, false},
+		{"plain text", `connection refused`, false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := arrServerFault(c.in); got != c.want {
+				t.Errorf("arrServerFault(%q) = %v, want %v", c.in, got, c.want)
 			}
 		})
 	}
@@ -485,6 +550,11 @@ func TestIsUserConfigError(t *testing.T) {
 		{"400 min-score", `HTTP 400: [{"errorMessage":"Minimum Custom Format Score can never be satisfied"}]`, true},
 		{"409 unique-name", `create PCOK failed: HTTP 409: ...`, true},
 		{"422 unprocessable", `HTTP 422: invalid quality structure`, true},
+
+		// A 400 that is really an unhandled exception. Disabling the rule
+		// would be wrong twice over: there is nothing in the rule to correct,
+		// and the next sync succeeds as soon as a custom format exists.
+		{"400 carrying a server exception", v5ServerFault, false},
 
 		{"500 server", `HTTP 500: Internal Server Error`, false},
 		{"502 bad gateway", `HTTP 502: upstream proxy error`, false},

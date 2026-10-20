@@ -362,11 +362,11 @@ type QualitySizeSet struct {
 // existed before this feature has no value, so it writes no sizes and no
 // profile is touched on upgrade. Nothing backfills the field.
 const (
-	QSSourceOff      = "off"      // write no sizes
-	QSSourceGuide    = "guide"    // resolve the profile's own guide reference, then the app default
-	QSSourceSetPfx   = "guide:"   // a named guide set, by trash_id
-	QSSourceCustomPfx = "custom:" // a set the user saved, by its id
-	QSSourceCaptured = "captured" // the sizes an imported profile captured from its instance
+	QSSourceOff       = "off"      // write no sizes
+	QSSourceGuide     = "guide"    // resolve the profile's own guide reference, then the app default
+	QSSourceSetPfx    = "guide:"   // a named guide set, by trash_id
+	QSSourceCustomPfx = "custom:"  // a set the user saved, by its id
+	QSSourceCaptured  = "captured" // the sizes an imported profile captured from its instance
 )
 
 // NamingFieldBinding: one auto-synced naming field's binding to a TRaSH scheme (#5).

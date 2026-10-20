@@ -419,14 +419,14 @@ func (s *Server) handleApply(w http.ResponseWriter, r *http.Request) {
 
 		QualitySizeSource:    req.QualitySizeSource,
 		QualitySizeOverrides: req.QualitySizeOverrides,
-		KeepArrCFIDs:      req.KeepArrCFIDs,
-		CFsCreated:        result.CFsCreated,
-		CFsUpdated:        result.CFsUpdated,
-		ScoresUpdated:     result.ScoresUpdated,
-		LastSync:          now,
-		Changes:           changes,
-		TriggerType:       core.TriggerTypeFromSource(triggerSource),
-		Categories:        core.DeriveSyncCategories(result),
+		KeepArrCFIDs:         req.KeepArrCFIDs,
+		CFsCreated:           result.CFsCreated,
+		CFsUpdated:           result.CFsUpdated,
+		ScoresUpdated:        result.ScoresUpdated,
+		LastSync:             now,
+		Changes:              changes,
+		TriggerType:          core.TriggerTypeFromSource(triggerSource),
+		Categories:           core.DeriveSyncCategories(result),
 	}
 	// AppliedAt freezes the "when changes landed" timestamp. Only set when
 	// the entry carries real changes — baseline / no-op entries leave it
@@ -662,7 +662,7 @@ func (s *Server) handleApply(w http.ResponseWriter, r *http.Request) {
 			ExcludedCFs:          req.ExcludedCFs,
 			KeepArrCFIDs:         req.KeepArrCFIDs,
 			ScoreOverrides:       persistedScoreOverrides,
-			QualityOverrides:    req.QualityOverrides,
+			QualityOverrides:     req.QualityOverrides,
 			QualityStructure:     req.QualityStructure,
 			Behavior:             req.Behavior,
 			Overrides:            req.Overrides,
