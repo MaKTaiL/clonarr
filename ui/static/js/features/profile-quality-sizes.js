@@ -83,9 +83,7 @@ export default {
       const inst = this.profileDetail?.instance;
       const arrId = this.profileDetail?._editLockedArrProfileId;
       if (!inst || !arrId) return null;
-      return (this.autoSyncRules || []).find(
-        r => r.instanceId === inst.id && r.arrProfileId === arrId
-      ) || null;
+      return this.findAutoSyncRule(inst.id, arrId);
     },
 
     pdQSShowTab() {
