@@ -1865,7 +1865,7 @@
 
             <div class="card" style="padding:10px 14px">
               <div class="qs-row" style="border-bottom:1px solid var(--border-subtle);padding-bottom:6px;margin-bottom:4px">
-                <div class="qs-name" style="font-size:13px;color:var(--text-muted);font-weight:400">Quality</div>
+                <div class="qs-name" style="width:230px;font-size:13px;color:var(--text-muted);font-weight:400">Quality</div>
                 <div style="font-size:13px;color:var(--text-muted);width:150px;flex-shrink:0" x-tt="'Min / preferred / max, as the instance has it now.'">On the instance</div>
                 <div style="font-size:13px;color:var(--text-muted);width:150px;flex-shrink:0" x-tt="'What Clonarr writes on the next sync.'">Will be written</div>
                 <div style="font-size:13px;color:var(--text-muted);flex:1;min-width:120px">Source</div>
@@ -1875,7 +1875,7 @@
               <template x-for="row in pdQSVisibleRows()" :key="row.quality">
                 <div>
                   <div class="qs-row" :style="row.allowed ? '' : 'opacity:0.6'">
-                    <div class="qs-name">
+                    <div class="qs-name" style="width:230px">
                       <span x-text="row.quality"></span>
                       <template x-if="row.group">
                         <span style="font-size:11px;color:var(--text-muted)" x-text="' · ' + row.group"></span>

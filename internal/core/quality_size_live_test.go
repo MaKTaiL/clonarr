@@ -108,11 +108,20 @@ func TestLiveV5WriteRoundTrip(t *testing.T) {
 	client := NewArrClientFor(inst, &http.Client{Timeout: 15 * time.Second})
 
 	const profileID = 4
+	// Two separate reads, not one struct copy. `next := *before` copies the
+	// struct but shares the Items backing array, so stamping next would
+	// mutate the snapshot meant for the restore and put the modified values
+	// back. That happened on the first run of this test and left the
+	// container's profile 4 changed; the same slice-aliasing trap the
+	// vpn-gateway credential-masking fix turned on.
+	original, err := client.GetProfile(profileID)
+	if err != nil {
+		t.Fatalf("get profile for the restore snapshot: %v", err)
+	}
 	before, err := client.GetProfile(profileID)
 	if err != nil {
 		t.Fatalf("get profile: %v", err)
 	}
-	original := *before
 
 	// A value nobody would pick by accident, so a false pass is impossible.
 	target := 123.4
@@ -199,7 +208,7 @@ func TestLiveV5WriteRoundTrip(t *testing.T) {
 		}
 	}
 
-	if err := client.UpdateProfile(&original); err != nil {
+	if err := client.UpdateProfile(original); err != nil {
 		t.Errorf("restore failed, sonarr-v5-test profile %d is left modified: %v", profileID, err)
 	} else {
 		t.Log("profile restored")
