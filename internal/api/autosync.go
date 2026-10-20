@@ -657,7 +657,10 @@ func (s *Server) handleRestoreAutoSyncRule(w http.ResponseWriter, r *http.Reques
 	endResult := "error: unknown"
 	defer func() { op.End(endResult) }()
 
-	syncReq.UserQualitySizeSets = s.Core.Config.Get().QualitySizeSets
+	// Carries the rule's size intent too. Filling only the saved sets, which
+	// is what this did at first, is useless without a source: the restored
+	// profile came out with the app's schema defaults and nothing said so.
+	core.FillQualitySizeIntent(&syncReq, rule, s.Core.Config.Get().QualitySizeSets)
 	plan, err := core.BuildSyncPlan(ad, inst, syncReq, imported, customCFs, nil, s.Core.HTTPClient, op)
 	if err != nil {
 		endResult = fmt.Sprintf("error: plan failed: %v", err)
@@ -745,12 +748,16 @@ func (s *Server) handleRestoreAutoSyncRule(w http.ResponseWriter, r *http.Reques
 		QualityStructure:  syncReq.QualityStructure,
 		Overrides:         syncReq.Overrides,
 		Behavior:          syncReq.Behavior,
-		CFsCreated:        result.CFsCreated,
-		CFsUpdated:        result.CFsUpdated,
-		ScoresUpdated:     result.ScoresUpdated,
-		LastSync:          now,
-		AppliedAt:         now,
-		TriggerType:       core.TriggerRestore,
+		// Mirrors the rest of this literal: syncReq is the intent that was
+		// written, filled from the rule by FillQualitySizeIntent above.
+		QualitySizeSource:    syncReq.QualitySizeSource,
+		QualitySizeOverrides: syncReq.QualitySizeOverrides,
+		CFsCreated:           result.CFsCreated,
+		CFsUpdated:           result.CFsUpdated,
+		ScoresUpdated:        result.ScoresUpdated,
+		LastSync:             now,
+		AppliedAt:            now,
+		TriggerType:          core.TriggerRestore,
 		Changes: &core.SyncChanges{
 			SettingsDetails: []string{fmt.Sprintf("Restored profile (created new ArrProfileID %d)", result.ArrProfileID)},
 		},
@@ -781,7 +788,6 @@ func (s *Server) handleRestoreAutoSyncRule(w http.ResponseWriter, r *http.Reques
 		"scoresUpdated":  result.ScoresUpdated,
 	})
 }
-
 
 // handleRuleCustomizations returns a per-rule breakdown of how much each
 // sync rule deviates from its TRaSH profile defaults. Read-only — does
@@ -855,4 +861,3 @@ func (s *Server) handleRuleCustomizations(w http.ResponseWriter, r *http.Request
 
 	writeJSON(w, out)
 }
-

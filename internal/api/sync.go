@@ -36,6 +36,21 @@ func qualityOverrideSummary(req core.SyncRequest) string {
 	return "none"
 }
 
+// findRuleFor returns the live rule managing one Arr profile, or nil. Used to
+// fall back to the rule's stored intent for fields a caller may not have sent.
+func (s *Server) findRuleFor(instanceID string, arrProfileID int) *core.AutoSyncRule {
+	if instanceID == "" || arrProfileID <= 0 {
+		return nil
+	}
+	rules := s.Core.Config.Get().AutoSync.Rules
+	for i := range rules {
+		if rules[i].InstanceID == instanceID && rules[i].ArrProfileID == arrProfileID && rules[i].OrphanedAt == "" {
+			return &rules[i]
+		}
+	}
+	return nil
+}
+
 func (s *Server) handleDryRun(w http.ResponseWriter, r *http.Request) {
 	r.Body = http.MaxBytesReader(w, r.Body, 32768)
 	var req core.SyncRequest
@@ -78,9 +93,10 @@ func (s *Server) handleDryRun(w http.ResponseWriter, r *http.Request) {
 	}
 	customCFs := s.Core.CustomCFs.List(inst.Type)
 	lastSyncedCFs := s.Core.GetLastSyncedCFs(req.InstanceID, req.ArrProfileID, req.Behavior)
-	// Quality size sets the user saved. Comes from config, never from the
-	// request body, so a client cannot hand us a set of its own.
-	req.UserQualitySizeSets = s.Core.Config.Get().QualitySizeSets
+	// Per-profile quality sizes. The saved sets come from config, never from
+	// the request body, and the intent falls back to the rule when the caller
+	// did not send one. See FillQualitySizeIntent.
+	core.FillQualitySizeIntent(&req, s.findRuleFor(req.InstanceID, req.ArrProfileID), s.Core.Config.Get().QualitySizeSets)
 	plan, err := core.BuildSyncPlan(ad, inst, req, imported, customCFs, lastSyncedCFs, s.Core.HTTPClient, nil)
 	if err != nil {
 		log.Printf("Dry-run error for %s: %v", inst.Name, err)
@@ -182,7 +198,7 @@ func (s *Server) handleApply(w http.ResponseWriter, r *http.Request) {
 	customCFs := s.Core.CustomCFs.List(inst.Type)
 	lastSyncedCFs := s.Core.GetLastSyncedCFs(req.InstanceID, req.ArrProfileID, req.Behavior)
 	behavior := core.ResolveSyncBehavior(req.Behavior)
-	req.UserQualitySizeSets = s.Core.Config.Get().QualitySizeSets
+	core.FillQualitySizeIntent(&req, s.findRuleFor(req.InstanceID, req.ArrProfileID), s.Core.Config.Get().QualitySizeSets)
 	plan, err := core.BuildSyncPlan(ad, inst, req, imported, customCFs, lastSyncedCFs, s.Core.HTTPClient, op)
 	if err != nil {
 		log.Printf("Apply plan error for %s: %v", inst.Name, err)
@@ -417,6 +433,8 @@ func (s *Server) handleApply(w http.ResponseWriter, r *http.Request) {
 		Overrides:         req.Overrides,
 		Behavior:          req.Behavior,
 
+		// Post-FillQualitySizeIntent, so this records what was actually
+		// written rather than only what the editor happened to send.
 		QualitySizeSource:    req.QualitySizeSource,
 		QualitySizeOverrides: req.QualitySizeOverrides,
 		KeepArrCFIDs:         req.KeepArrCFIDs,

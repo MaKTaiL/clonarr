@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"sort"
 	"strings"
@@ -170,10 +171,17 @@ func buildQSProfileRows(items []arr.ArrQualityItem, sizes map[string]core.Qualit
 // qsSetOption is one entry in the source picker: a guide set or a user set,
 // described the same way so one list can hold both.
 type qsSetOption struct {
-	Value     string `json:"value"` // the stored source string
-	Name      string `json:"name"`
-	Origin    string `json:"origin"` // "guide" or "user"
-	Qualities int    `json:"qualities"`
+	Value  string `json:"value"` // the stored source string
+	Name   string `json:"name"`
+	Origin string `json:"origin"` // "guide" or "user"
+	// ID is set for a user set, so the tab can offer to delete it.
+	ID string `json:"id,omitempty"`
+	// Entries are the set's own rows. Sent so the tab can resolve a source
+	// the user has just picked but not yet saved. Without them the "will be
+	// written" column could only show the saved rule's resolution, which is
+	// the previous set's numbers under the new set's name. Six sets of at
+	// most 21 rows, so the payload cost is nothing.
+	Entries []core.QualitySizeEntry `json:"entries"`
 }
 
 func (s *Server) qsAvailableSets(appType string) []qsSetOption {
@@ -184,10 +192,10 @@ func (s *Server) qsAvailableSets(appType string) []qsSetOption {
 				continue
 			}
 			out = append(out, qsSetOption{
-				Value:     core.QSSourceSetPfx + set.TrashID,
-				Name:      set.Type,
-				Origin:    "guide",
-				Qualities: len(set.Qualities),
+				Value:   core.QSSourceSetPfx + set.TrashID,
+				Name:    set.Type,
+				Origin:  "guide",
+				Entries: set.Qualities,
 			})
 		}
 		// movie and series first, then the sqp variants, then anime: the same
@@ -209,28 +217,21 @@ func (s *Server) qsAvailableSets(appType string) []qsSetOption {
 			continue
 		}
 		out = append(out, qsSetOption{
-			Value:     core.QSSourceCustomPfx + set.ID,
-			Name:      set.Name,
-			Origin:    "user",
-			Qualities: len(set.Qualities),
+			Value:   core.QSSourceCustomPfx + set.ID,
+			Name:    set.Name,
+			Origin:  "user",
+			ID:      set.ID,
+			Entries: set.Qualities,
 		})
 	}
 	return out
 }
 
 // --- User sets ---
-
-func (s *Server) handleListQualitySizeSets(w http.ResponseWriter, r *http.Request) {
-	appType := r.URL.Query().Get("app")
-	out := []core.QualitySizeSet{}
-	for _, set := range s.Core.Config.Get().QualitySizeSets {
-		if appType != "" && set.AppType != appType {
-			continue
-		}
-		out = append(out, set)
-	}
-	writeJSON(w, out)
-}
+//
+// There is no list endpoint: the per-rule endpoint above already serves the
+// sets the picker needs, and a second way to read the same data is one more
+// thing to keep in step.
 
 func (s *Server) handleSaveQualitySizeSet(w http.ResponseWriter, r *http.Request) {
 	r.Body = http.MaxBytesReader(w, r.Body, 1<<18)
@@ -255,18 +256,51 @@ func (s *Server) handleSaveQualitySizeSet(w http.ResponseWriter, r *http.Request
 		writeError(w, 400, "A set needs at least one quality")
 		return
 	}
-
-	var saveErr string
-	if err := s.Core.Config.Update(func(cfg *core.Config) {
-		// Names are what the picker shows, so a duplicate within one app
-		// makes two entries that cannot be told apart.
-		for _, existing := range cfg.QualitySizeSets {
-			if existing.ID != set.ID && existing.AppType == set.AppType &&
-				strings.EqualFold(existing.Name, set.Name) {
-				saveErr = "A set with that name already exists for this app"
-				return
-			}
+	// Checked here rather than at sync time. An unvalidated row reaches the
+	// Arr API inside a profile write and fails the whole profile with a 400,
+	// surfacing as a sync failure traced back to a set saved weeks earlier.
+	lim := arr.QualitySizeLimitsFor(set.AppType)
+	seen := map[string]bool{}
+	for i := range set.Qualities {
+		q := &set.Qualities[i]
+		q.Quality = strings.TrimSpace(q.Quality)
+		if q.Quality == "" {
+			writeError(w, 400, "Every row needs a quality name")
+			return
 		}
+		if seen[q.Quality] {
+			writeError(w, 400, "The set lists "+q.Quality+" twice")
+			return
+		}
+		seen[q.Quality] = true
+		if q.Min < 0 || q.Preferred < 0 || q.Max < 0 {
+			writeError(w, 400, q.Quality+": sizes cannot be negative")
+			return
+		}
+		if q.Min > q.Max {
+			writeError(w, 400, q.Quality+": the minimum is above the maximum")
+			return
+		}
+		if q.Max > lim.Max || q.Preferred > lim.Preferred {
+			writeError(w, 400, fmt.Sprintf("%s: %s accepts at most %g preferred and %g maximum", q.Quality, set.AppType, lim.Preferred, lim.Max))
+			return
+		}
+	}
+
+	// Checked before entering Update, which calls saveLocked unconditionally:
+	// a return from inside the closure ends the closure, not the save, so
+	// rejecting in there still rewrote clonarr.json for a request that
+	// changed nothing. Names are what the picker shows, so a duplicate within
+	// one app makes two entries that cannot be told apart.
+	for _, existing := range s.Core.Config.Get().QualitySizeSets {
+		if existing.ID != set.ID && existing.AppType == set.AppType &&
+			strings.EqualFold(existing.Name, set.Name) {
+			writeError(w, 409, "A set with that name already exists for this app")
+			return
+		}
+	}
+
+	if err := s.Core.Config.Update(func(cfg *core.Config) {
 		if set.ID == "" {
 			set.ID = core.GenerateID()
 			cfg.QualitySizeSets = append(cfg.QualitySizeSets, set)
@@ -281,10 +315,6 @@ func (s *Server) handleSaveQualitySizeSet(w http.ResponseWriter, r *http.Request
 		cfg.QualitySizeSets = append(cfg.QualitySizeSets, set)
 	}); err != nil {
 		writeError(w, 500, "Failed to save the set")
-		return
-	}
-	if saveErr != "" {
-		writeError(w, 409, saveErr)
 		return
 	}
 	writeJSON(w, set)
@@ -313,7 +343,7 @@ func (s *Server) handleDeleteQualitySizeSet(w http.ResponseWriter, r *http.Reque
 	}
 
 	if err := s.Core.Config.Update(func(cfg *core.Config) {
-		out := cfg.QualitySizeSets[:0]
+		out := make([]core.QualitySizeSet, 0, len(cfg.QualitySizeSets))
 		for _, set := range cfg.QualitySizeSets {
 			if set.ID != id {
 				out = append(out, set)

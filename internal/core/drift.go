@@ -263,19 +263,29 @@ func (d *DriftRunner) runOnceInternal(ctx context.Context, autoApply bool) ([]Dr
 		}
 		customCFs := d.app.CustomCFs.List(w.instance.Type)
 
-		// The target has to carry the same sizes the apply would write.
-		// If it does not, drift reports a difference that syncing cannot
-		// resolve and the rule never goes clean again.
+		// The target carries the same sizes the apply would write, so the two
+		// cannot disagree once diffArrProfile learns to compare them.
+		//
+		// Today it does not: nothing in diffArrProfile looks at MinSize,
+		// PreferredSize or MaxSize, so a user who edits a size directly in
+		// Sonarr is never reported as drifted, and passing this map changes
+		// no outcome. Said plainly because an earlier version of this comment
+		// claimed it prevented an unresolvable drift report, which the code
+		// cannot do while the diff ignores the field.
+		//
+		// cfg comes from above the loop on purpose. Config.Get deep-copies
+		// every instance, rule and sync-history entry, and calling it per rule
+		// cloned the whole config once per rule per tick.
 		sizeReq := SyncRequest{
 			QualitySizeSource:    w.rule.QualitySizeSource,
 			QualitySizeOverrides: w.rule.QualitySizeOverrides,
-			UserQualitySizeSets:  d.app.Config.Get().QualitySizeSets,
+			UserQualitySizeSets:  cfg.QualitySizeSets,
 		}
 		target, buildErr := BuildArrProfile(
 			profile, appData, snap.qDefs, snap.langs, nameToID,
 			selectedCFs, current.Name, w.rule.ScoreOverrides,
 			customCFs, w.rule.QualityStructure,
-			profileQualitySizes(sizeReq, appData, w.instance, nil, snap.qDefs),
+			profileQualitySizes(sizeReq, appData, w.instance, snap.qDefs),
 		)
 		if buildErr != nil {
 			errs = append(errs, fmt.Sprintf("rule %s: build target: %v", w.rule.ID, buildErr))
@@ -1046,7 +1056,7 @@ func diffArrProfile(current, target *arr.ArrQualityProfile, cfs []arr.ArrCF, rul
 		orderCur := getEnabledOrder(current.Items, false, driftedGroups)
 		orderCurRev := getEnabledOrder(current.Items, true, driftedGroups)
 		orderTgt := getEnabledOrder(target.Items, false, driftedGroups)
-		
+
 		if orderCur != orderTgt && orderCurRev != orderTgt {
 			out = append(out, DriftDetail{Field: "quality_order", CFName: "structure", Current: "Drifted", Target: "Original"})
 		}
@@ -1086,7 +1096,7 @@ func getGroupDriftQualities(cur, tgt []arr.ArrQualityItem) map[string]bool {
 
 func getEnabledOrder(items []arr.ArrQualityItem, reverseEnabled bool, exclude map[string]bool) string {
 	var seq []string
-	
+
 	processItem := func(it arr.ArrQualityItem) {
 		if !it.Allowed {
 			return

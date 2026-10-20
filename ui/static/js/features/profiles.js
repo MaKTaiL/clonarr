@@ -932,6 +932,9 @@ export default {
           if (matchingRules.length === 1) {
             this.applyRuleStateToEditor(matchingRules[0], detail);
           }
+          // Two or more rules on the same guide profile reach the editor
+          // through resyncProfile instead, which locks the Arr profile and
+          // restores inline; the quality-size state is loaded there.
         }
         // Issue #52 - initial baseline. resyncProfile re-captures this
         // after its own restore pass; for the create-new path (TPD Use
@@ -1991,14 +1994,17 @@ export default {
       } else if (Object.keys(this.qualityOverrides).length > 0) {
         body.qualityOverrides = this.qualityOverrides;
       }
-      // Per-profile quality sizes. Sent only when the user has actually
-      // chosen something: an unset source means off, and omitting the field
-      // tells the backend to leave whatever the rule already has rather than
-      // reset it, which is how every other partial writer behaves.
-      if (this.pdQSSource) body.qualitySizeSource = this.pdQSSource;
-      if (Object.keys(this.pdQSOverrides || {}).length > 0) {
-        body.qualitySizeOverrides = this.pdQSOverrides;
-      }
+      // Per-profile quality sizes. Always sent, both of them.
+      //
+      // The first version sent each only when non-empty, reasoning that
+      // omission means "leave what the rule has", which is how the partial
+      // rule writers behave. That was wrong for the editor, which owns these
+      // fields: an empty source and an empty override map are exactly how the
+      // user says "off" and "I removed the last one", and omitting them made
+      // both unsavable. The backend's keep-existing guards stay, because they
+      // are right for the callers that genuinely do not own the fields.
+      body.qualitySizeSource = this.pdQSSource || 'off';
+      body.qualitySizeOverrides = this.pdQSOverrides || {};
       // Sync behavior rules
       if (this.syncForm.behavior) body.behavior = this.syncForm.behavior;
       // Free-form user notes about this rule - persists as
@@ -2393,6 +2399,13 @@ export default {
             // edit keepArrCFIDs, the user's change won't be silently
             // dropped here.
             keepArrCFIDs: (Array.isArray(syncBody.keepArrCFIDs) ? syncBody.keepArrCFIDs : existingRule.keepArrCFIDs) || null,
+            // Echo the quality-size intent for the same reason as excludedCFs
+            // above: existingRule was read BEFORE this sync, so spreading it
+            // would write the pre-edit source back over what apply just
+            // persisted. Changing a set or switching to Off would survive the
+            // sync and then be undone by this PUT a moment later.
+            qualitySizeSource: syncBody.qualitySizeSource || 'off',
+            qualitySizeOverrides: syncBody.qualitySizeOverrides || {},
             // Description: echo whatever the sync body just sent.
             // buildSyncBody only includes the field when trimmed
             // pdDescription is non-empty, so explicit empty-string
@@ -2497,6 +2510,11 @@ export default {
         keepArrCFIDs: (Array.isArray(syncBody.keepArrCFIDs) ? syncBody.keepArrCFIDs : existingRule.keepArrCFIDs) || null,
         description: syncBody.description !== undefined ? syncBody.description : '',
         customizeEnabled: syncBody.customizeEnabled,
+        // Same allowlist hazard the comments above describe: without these two
+        // the spread of existingRule puts the pre-edit values back, so Save
+        // reported success and discarded every quality-size change.
+        qualitySizeSource: syncBody.qualitySizeSource || 'off',
+        qualitySizeOverrides: syncBody.qualitySizeOverrides || {},
       };
       this.debugLog('UI', `Save (rule-only): "${profile.name}" → ${inst.name}`);
       this.savingRule = true;
@@ -3062,6 +3080,15 @@ export default {
       // Save-only would show stale pre-save values pulled from sh.
       const ruleForRestore = this.autoSyncRules.find(r => r.instanceId === inst.id && r.arrProfileId === sh.arrProfileId);
       const ruleData = ruleForRestore || sh;
+      // Per-profile quality sizes. This path is how the editor opens whenever
+      // two rules share one guide profile, so without it the Quality size tab
+      // and its basics row never appeared for a perfectly normal setup.
+      // _editLockedArrProfileId is set just above, which is what pdQSRule
+      // resolves against.
+      this.pdQSSource = ruleData.qualitySizeSource || '';
+      this.pdQSOverrides = { ...(ruleData.qualitySizeOverrides || {}) };
+      this._pdQSTouched = false;
+      this.pdQSLoad(true);
       // Restore optional CF selections from sync history
       if (sh.selectedCFs && Object.keys(sh.selectedCFs).length > 0) {
         const groups = this.profileDetail?.detail?.trashGroups || [];
@@ -5766,6 +5793,8 @@ export default {
         pdOv: this.pdOverrides,
         qStruct,
         qOver: this.qualityOverrides,
+        qsSrc: this.pdQSSource || '',
+        qsOver: this.pdQSOverrides || {},
         desc: (this.pdDescription || '').trim(),
       });
     },
@@ -5915,6 +5944,8 @@ export default {
       this.profileDetail._arrProfileName = comparison.arrProfileName || this.resolveArrProfileName(inst.id, arrIdNum) || null;
       this.profileDetail._editLockedArrProfileId = arrIdNum;
       this.resyncTargetArrProfileId = arrIdNum;
+      // The lock is what pdQSRule resolves against, so the tab can load now.
+      this.pdQSLoad(true);
       // loadExtraCFList is idempotent + cache-gated, so this is a no-op
       // when the pre-flight already loaded it (covers the rare case where
       // openProfileDetail invalidated the cache during reset).

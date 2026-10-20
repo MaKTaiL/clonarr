@@ -8,7 +8,6 @@ import (
 	"strings"
 	"sync"
 	"time"
-
 )
 
 // (App.RunPullAndSync moved to pull.go — canonical Pull-and-sync flow.)
@@ -123,7 +122,6 @@ func filterEligibleRulesForPull(rules []AutoSyncRule, currentCommit string) []Au
 	}
 	return out
 }
-
 
 // runRulesPerInstance groups rules by instance, runs a pre-flight
 // reachability check (WaitForInstanceReachable) per instance in
@@ -255,6 +253,7 @@ const (
 //     / drift-apply produced an action on the /customformat endpoint).
 //   - "profile" when the sync changed profile-level state (scores,
 //     quality items, settings, profile creation).
+//
 // A regular sync that touches both gets both tags; either-only flows
 // get the single applicable tag; a no-op sync returns nil so the
 // resulting omitempty field keeps the JSON quiet for the 70-80% of
@@ -379,7 +378,7 @@ func (app *App) runAutoSyncRule(rule AutoSyncRule, currentCommit string, parent 
 	// retry on next pass.
 	customCFs := app.CustomCFs.List(inst.Type)
 	lastSyncedCFs := app.GetLastSyncedCFs(req.InstanceID, req.ArrProfileID, req.Behavior)
-	req.UserQualitySizeSets = app.Config.Get().QualitySizeSets
+	FillQualitySizeIntent(&req, &rule, app.Config.Get().QualitySizeSets)
 	plan, err := BuildSyncPlan(ad, inst, req, imported, customCFs, lastSyncedCFs, app.HTTPClient, op)
 	if err != nil {
 		rawMsg := fmt.Sprintf("plan failed: %v", err)
@@ -658,13 +657,19 @@ func (app *App) runAutoSyncRule(rule AutoSyncRule, currentCommit string, parent 
 		Overrides:         rule.Overrides,
 		Behavior:          rule.Behavior,
 		KeepArrCFIDs:      rule.KeepArrCFIDs,
-		CFsCreated:        result.CFsCreated,
-		CFsUpdated:        result.CFsUpdated,
-		ScoresUpdated:     result.ScoresUpdated,
-		LastSync:          now,
-		Changes:           changes,
-		TriggerType:       parent.SourceTrigger(),
-		Categories:        DeriveSyncCategories(result),
+		// From req rather than rule: after FillQualitySizeIntent this is the
+		// intent that was actually written, which is the point of the
+		// snapshot. The scheduler produces most history rows, so leaving
+		// these out made the field empty almost everywhere.
+		QualitySizeSource:    req.QualitySizeSource,
+		QualitySizeOverrides: req.QualitySizeOverrides,
+		CFsCreated:           result.CFsCreated,
+		CFsUpdated:           result.CFsUpdated,
+		ScoresUpdated:        result.ScoresUpdated,
+		LastSync:             now,
+		Changes:              changes,
+		TriggerType:          parent.SourceTrigger(),
+		Categories:           DeriveSyncCategories(result),
 	}
 	// Freeze AppliedAt on real-change entries so the History tab's "Last
 	// Changed" column shows when changes actually landed, not when the last
@@ -1221,7 +1226,6 @@ func ComputeRuleCounts(rule AutoSyncRule, detail *ProfileDetailResult) (override
 	return overrides, optional
 }
 
-
 // MigrateGlobalPauseToInstances converts the deprecated global
 // AutoSync.Paused flag to per-instance Instance.AutoSyncPaused. Runs
 // once on startup: if global pause was true, every instance is marked
@@ -1394,9 +1398,9 @@ func (app *App) MigrateExcludedCFs() {
 	// Cache by commit hash — many rules share the same LastSyncCommit, so
 	// we git-read each commit's group inventory + profile formatItems once.
 	type commitLookup struct {
-		groups       map[string]CommitGroupInfo
-		formatItems  map[string]map[string]bool // profileTrashID → formatItems set
-		groupsOK     bool
+		groups              map[string]CommitGroupInfo
+		formatItems         map[string]map[string]bool // profileTrashID → formatItems set
+		groupsOK            bool
 		formatItemsResolved map[string]bool // profileTrashID → already-attempted lookup
 	}
 	commitCache := make(map[string]*commitLookup)

@@ -362,12 +362,19 @@ type QualitySizeSet struct {
 // existed before this feature has no value, so it writes no sizes and no
 // profile is touched on upgrade. Nothing backfills the field.
 const (
-	QSSourceOff       = "off"      // write no sizes
-	QSSourceGuide     = "guide"    // resolve the profile's own guide reference, then the app default
-	QSSourceSetPfx    = "guide:"   // a named guide set, by trash_id
-	QSSourceCustomPfx = "custom:"  // a set the user saved, by its id
-	QSSourceCaptured  = "captured" // the sizes an imported profile captured from its instance
+	QSSourceOff       = "off"     // take no set; only per-quality overrides are written
+	QSSourceGuide     = "guide"   // resolve the profile's own guide reference, then the app default
+	QSSourceSetPfx    = "guide:"  // a named guide set, by trash_id
+	QSSourceCustomPfx = "custom:" // a set the user saved, by its id
 )
+
+// There is deliberately no "captured" source, which an earlier draft had for
+// reusing the sizes an imported profile brought with it. QualityItem holds one
+// size triple and a group's members as bare names, and the export path copies
+// a group's sizes from the group row, which on Sonarr v5 never carries any.
+// Such a source would therefore cover only the qualities that sit outside a
+// group, silently, which is worse than not offering it. Carrying it properly
+// means per-member sizes in the import model.
 
 // NamingFieldBinding: one auto-synced naming field's binding to a TRaSH scheme (#5).
 // Per-field — Config.NamingAutoSync is instanceID → fieldKey → binding. Opt-in:
@@ -963,6 +970,17 @@ func (cs *ConfigStore) Get() Config {
 			cfg.SyncHistory[i].QualityOverrides = make(map[string]bool, len(sh.QualityOverrides))
 			for k, v := range sh.QualityOverrides {
 				cfg.SyncHistory[i].QualityOverrides[k] = v
+			}
+		}
+		// The rule-level twin of this map was copied correctly from the
+		// start and this one was missed, which is the easy half of the pair
+		// to forget: nothing reads it yet, so sharing the map off a request
+		// body was latent rather than visible. It stops being latent the
+		// moment a rollback writes through a Get() copy.
+		if len(sh.QualitySizeOverrides) > 0 {
+			cfg.SyncHistory[i].QualitySizeOverrides = make(map[string]QSOverride, len(sh.QualitySizeOverrides))
+			for k, v := range sh.QualitySizeOverrides {
+				cfg.SyncHistory[i].QualitySizeOverrides[k] = v
 			}
 		}
 		if len(sh.QualityStructure) > 0 {

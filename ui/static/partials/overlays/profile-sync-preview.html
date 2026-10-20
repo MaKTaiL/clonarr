@@ -424,7 +424,7 @@
         <template x-if="(!pdQSSource || pdQSSource === 'off') && pdQSDefaultSet()">
           <button class="qs-mode-btn"
                   @click="pdQSSetSource(pdQSDefaultSet().value)"
-                  :x-tt="'Use the guide\'s ' + pdQSSetTitle(pdQSDefaultSet().name) + ' sizes for this profile.'"
+                  x-tt="'Use the guide\'s ' + pdQSSetTitle(pdQSDefaultSet().name) + ' sizes for this profile.'"
                   x-text="'Use ' + pdQSSetTitle(pdQSDefaultSet().name)"></button>
         </template>
         <template x-if="pdQSSource && pdQSSource !== 'off'">
@@ -534,7 +534,7 @@
       <button class="sp-tab"
               x-show="pdQSShowTab()"
               :class="{ active: spActiveTab === 'quality-size' }"
-              @click="spActiveTab = 'quality-size'; pdQSLoad(true)">Quality size
+              @click="spActiveTab = 'quality-size'; pdQSLoad(true).then(() => { if (!pdQSShowTab()) spActiveTab = 'default'; })">Quality size
         <template x-if="pdQSChangeCount() > 0">
           <span class="sp-tab-count" x-text="pdQSChangeCount()"></span>
         </template>
@@ -1810,7 +1810,8 @@
          refreshed when the tab is clicked. Deliberately not an x-effect:
          pdQSLoad writes the same state an effect would track as a
          dependency, which re-enters. -->
-    <div class="sp-body" x-show="spActiveTab === 'quality-size'">
+    <div class="sp-body" x-show="spActiveTab === 'quality-size'"
+         style="grid-template-columns: 1fr">
       <div style="padding:16px 20px;max-width:1100px">
 
         <template x-if="pdQSLoading">
@@ -1832,15 +1833,27 @@
                         @click="pdQSSetSource('off')"
                         x-tt="'Write no sizes for this profile. Whatever the instance has stays as it is.'">Off</button>
                 <template x-for="set in pdQSSets" :key="set.value">
-                  <button class="qs-type-btn"
-                          :class="{ active: pdQSSource === set.value }"
-                          @click="pdQSSetSource(set.value)"
-                          :x-tt="(set.origin === 'user' ? 'Your own set, ' : 'From TRaSH-Guides, ') + set.qualities + ' qualities.'">
-                    <span x-text="set.origin === 'user' ? set.name : pdQSSetTitle(set.name)"></span>
-                    <template x-if="set.origin === 'guide' && set.name === pdQSDefaultSetType">
-                      <span style="color:var(--text-muted);font-weight:400"> · default</span>
+                  <span style="display:inline-flex;align-items:center;gap:2px">
+                    <button class="qs-type-btn"
+                            :class="{ active: pdQSSource === set.value }"
+                            @click="pdQSSetSource(set.value)"
+                            x-tt="(set.origin === 'user' ? 'Your own set, ' : 'From TRaSH-Guides, ') + (set.entries || []).length + ' qualities.'">
+                      <span x-text="set.origin === 'user' ? set.name : pdQSSetTitle(set.name)"></span>
+                      <template x-if="set.origin === 'guide' && set.name === pdQSDefaultSetType">
+                        <span style="color:var(--text-muted);font-weight:400"> · default</span>
+                      </template>
+                    </button>
+                    <!-- Only the user's own sets can be removed, and this is
+                         the only way to do it: without it a set saved under a
+                         name you want to reuse blocks that name forever, and
+                         sets accumulate with no way out. -->
+                    <template x-if="set.origin === 'user'">
+                      <button class="sp-basics-reset"
+                              @click="pdQSDeleteSet(set)"
+                              :aria-label="'Delete the set ' + set.name"
+                              x-tt="'Delete this saved set. Refused while a sync rule still points at it.'">&#10005;</button>
                     </template>
-                  </button>
+                  </span>
                 </template>
               </div>
             </div>
@@ -1864,18 +1877,18 @@
             </div>
 
             <div class="card" style="padding:10px 14px">
-              <div class="qs-row" style="border-bottom:1px solid var(--border-subtle);padding-bottom:6px;margin-bottom:4px">
-                <div class="qs-name" style="width:230px;font-size:13px;color:var(--text-muted);font-weight:400">Quality</div>
-                <div style="font-size:13px;color:var(--text-muted);width:150px;flex-shrink:0" x-tt="'Min / preferred / max, as the instance has it now.'">On the instance</div>
-                <div style="font-size:13px;color:var(--text-muted);width:150px;flex-shrink:0" x-tt="'What Clonarr writes on the next sync.'">Will be written</div>
-                <div style="font-size:13px;color:var(--text-muted);flex:1;min-width:120px">Source</div>
-                <div style="font-size:13px;color:var(--text-muted);width:104px;flex-shrink:0;text-align:center" x-tt="'Auto follows the chosen set. Custom uses your own numbers for this one quality.'">Mode</div>
+              <div class="pqs-row pqs-head">
+                <div class="pqs-name">Quality</div>
+                <div style="width:150px;flex-shrink:0" x-tt="'Min / preferred / max, as the instance has it now.'">On the instance</div>
+                <div style="width:150px;flex-shrink:0" x-tt="'What Clonarr writes on the next sync.'">Will be written</div>
+                <div style="flex:1;min-width:120px">Source</div>
+                <div style="width:104px;flex-shrink:0;text-align:center" x-tt="'Auto follows the chosen set. Custom uses your own numbers for this one quality.'">Mode</div>
               </div>
 
               <template x-for="row in pdQSVisibleRows()" :key="row.quality">
                 <div>
-                  <div class="qs-row" :style="row.allowed ? '' : 'opacity:0.6'">
-                    <div class="qs-name" style="width:230px">
+                  <div class="pqs-row" :style="row.allowed ? { opacity: '0.6' } : {}">
+                    <div class="pqs-name">
                       <span x-text="row.quality"></span>
                       <template x-if="row.group">
                         <span style="font-size:11px;color:var(--text-muted)" x-text="' · ' + row.group"></span>

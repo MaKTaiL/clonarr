@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"math"
 	"net/http"
 	"sort"
 	"strconv"
@@ -156,7 +157,7 @@ type SyncRequest struct {
 	ImportedProfileID string   `json:"importedProfileId,omitempty"` // alternative: sync from imported/custom profile
 	ArrProfileID      int      `json:"arrProfileId"`                // target Arr profile to set scores on (0 = create new)
 	ProfileName       string   `json:"profileName"`                 // custom name for new profile (optional)
-	SelectedCFs []string `json:"selectedCFs"` // optional: additional CF trash_ids from groups
+	SelectedCFs       []string `json:"selectedCFs"`                 // optional: additional CF trash_ids from groups
 	// ExcludedCFs: trash_ids of CFs that ARE in TRaSH defaults for this
 	// profile but the user has explicitly opted out of via the rule editor.
 	// Subtracted from the effective set after merging trash_defaults +
@@ -806,7 +807,7 @@ func BuildSyncPlan(ad *AppData, instance Instance, req SyncRequest, imported *Im
 				}
 				// Same size map the apply will use, so a preview cannot
 				// disagree with what gets written.
-				newItems, err := resolveQualityItems(desiredItems, qualityByName, profileQualitySizes(req, ad, instance, imported, qualityDefs))
+				newItems, err := resolveQualityItems(desiredItems, qualityByName, profileQualitySizes(req, ad, instance, qualityDefs))
 				if err == nil {
 					// Apply legacy flat overrides when no structure override
 					if len(req.QualityStructure) == 0 && len(req.QualityOverrides) > 0 {
@@ -830,7 +831,7 @@ func BuildSyncPlan(ad *AppData, instance Instance, req SyncRequest, imported *Im
 							if name == "" {
 								continue
 							}
-							
+
 							oldState, exists := oldAllowed[name]
 							if exists && oldState != item.Allowed {
 								suffix := ""
@@ -843,7 +844,7 @@ func BuildSyncPlan(ad *AppData, instance Instance, req SyncRequest, imported *Im
 									plan.QualityPreview = append(plan.QualityPreview, name+": Enabled → Disabled"+suffix)
 								}
 							}
-							
+
 							if len(item.Items) == 0 {
 								oldGrp, grpExists := oldGroups[name]
 								if grpExists || oldGrp != "" || groupName != "" {
@@ -860,7 +861,7 @@ func BuildSyncPlan(ad *AppData, instance Instance, req SyncRequest, imported *Im
 									}
 								}
 							}
-							
+
 							if len(item.Items) > 0 {
 								collectNewState(item.Items, name)
 							}
@@ -987,11 +988,11 @@ type SyncResult struct {
 	// CFCommits) so the History UI can join attribution + diff
 	// per row. nil when no diff was computed (e.g. pre-update GET
 	// failed) - downstream treats nil as "no spec diff to show".
-	CFSpecDiffs     map[string]*CFSpecDiff `json:"cfSpecDiffs,omitempty"`
-	ProfileCreated  bool     `json:"profileCreated,omitempty"`
-	ArrProfileID    int      `json:"arrProfileId,omitempty"`
-	ArrProfileName  string   `json:"arrProfileName,omitempty"`
-	Errors          []string `json:"errors"`
+	CFSpecDiffs    map[string]*CFSpecDiff `json:"cfSpecDiffs,omitempty"`
+	ProfileCreated bool                   `json:"profileCreated,omitempty"`
+	ArrProfileID   int                    `json:"arrProfileId,omitempty"`
+	ArrProfileName string                 `json:"arrProfileName,omitempty"`
+	Errors         []string               `json:"errors"`
 }
 
 // ExecuteSyncPlan applies a previously built sync plan.
@@ -1196,7 +1197,7 @@ func ExecuteSyncPlan(ad *AppData, instance Instance, req SyncRequest, plan *Sync
 			delete(selectedCFsMap, id)
 		}
 
-		arrProfile, err := BuildArrProfile(profile, ad, qualityDefs, languages, nameToID, selectedCFsMap, req.ProfileName, cfScoreOverrides, customCFs, req.QualityStructure, profileQualitySizes(req, ad, instance, imported, qualityDefs))
+		arrProfile, err := BuildArrProfile(profile, ad, qualityDefs, languages, nameToID, selectedCFsMap, req.ProfileName, cfScoreOverrides, customCFs, req.QualityStructure, profileQualitySizes(req, ad, instance, qualityDefs))
 		if err != nil {
 			result.Errors = append(result.Errors, fmt.Sprintf("build profile: %v", err))
 			return result, nil
@@ -1599,7 +1600,17 @@ func ExecuteSyncPlan(ad *AppData, instance Instance, req SyncRequest, plan *Sync
 					itemsSource = req.QualityStructure
 				}
 
-				newItems, err := resolveQualityItems(itemsSource, qualityByName, profileQualitySizes(req, ad, instance, imported, qualityDefs))
+				// What the instance has now, taken before the rebuild
+				// replaces targetProfile.Items. Needed because a size change
+				// produces no QualityDetails entry and no other delta, so
+				// without comparing it the updated flag stayed false and a
+				// size-only change was never sent: the branch below logged
+				// "no profile changes to send" and the user saw "No changes".
+				// It only appeared to work when the sync happened to change
+				// something else as well.
+				oldSizes := collectQualitySizes(targetProfile.Items)
+
+				newItems, err := resolveQualityItems(itemsSource, qualityByName, profileQualitySizes(req, ad, instance, qualityDefs))
 				if err != nil {
 					result.Errors = append(result.Errors, fmt.Sprintf("resolve quality items: %v", err))
 				} else {
@@ -1628,7 +1639,7 @@ func ExecuteSyncPlan(ad *AppData, instance Instance, req SyncRequest, plan *Sync
 							if name == "" {
 								continue
 							}
-							
+
 							oldState, exists := oldAllowed[name]
 							if exists && oldState != item.Allowed {
 								suffix := ""
@@ -1641,7 +1652,7 @@ func ExecuteSyncPlan(ad *AppData, instance Instance, req SyncRequest, plan *Sync
 									result.QualityDetails = append(result.QualityDetails, name+": Enabled → Disabled"+suffix)
 								}
 							}
-							
+
 							if len(item.Items) == 0 {
 								oldGrp, grpExists := oldGroups[name]
 								if grpExists || oldGrp != "" || groupName != "" {
@@ -1658,7 +1669,7 @@ func ExecuteSyncPlan(ad *AppData, instance Instance, req SyncRequest, plan *Sync
 									}
 								}
 							}
-							
+
 							if len(item.Items) > 0 {
 								collectNewState(item.Items, name)
 							}
@@ -1701,6 +1712,14 @@ func ExecuteSyncPlan(ad *AppData, instance Instance, req SyncRequest, plan *Sync
 					}
 					targetProfile.Items = append(unused, newItems...)
 					if len(result.QualityDetails) > 0 {
+						result.QualityUpdated = true
+						updated = true
+					}
+					// Sizes, compared by quality name against the snapshot.
+					// One line per quality so the toast and the sync history
+					// say what moved rather than just that something did.
+					if changes := diffQualitySizes(oldSizes, collectQualitySizes(targetProfile.Items)); len(changes) > 0 {
+						result.QualityDetails = append(result.QualityDetails, changes...)
 						result.QualityUpdated = true
 						updated = true
 					}
@@ -2300,7 +2319,7 @@ func arrGenericMessage(body string) string {
 // business. An empty list means the read failed or the instance is in a state
 // we do not understand, and writing sizes into profiles on a guess is the
 // worse of the two mistakes, so that answers nil too.
-func profileQualitySizes(req SyncRequest, ad *AppData, instance Instance, imported *ImportedProfile, qualityDefs []arr.ArrQualityDefinition) map[string]QualitySizeTriple {
+func profileQualitySizes(req SyncRequest, ad *AppData, instance Instance, qualityDefs []arr.ArrQualityDefinition) map[string]QualitySizeTriple {
 	if len(qualityDefs) == 0 || arr.QualityDefinitionsCarrySizes(qualityDefs) {
 		return nil
 	}
@@ -2312,9 +2331,6 @@ func profileQualitySizes(req SyncRequest, ad *AppData, instance Instance, import
 	}
 	if ad != nil {
 		in.GuideSets = ad.QualitySizes
-	}
-	if imported != nil {
-		in.CapturedItems = imported.Qualities
 	}
 	// ProfileRef stays empty until the guide publishes
 	// trash_quality_definition on its profiles, at which point the guide
@@ -2338,7 +2354,9 @@ func profileQualitySizes(req SyncRequest, ad *AppData, instance Instance, import
 // This is the only path from stored intent to the three size fields in the
 // request body. Reading them off the incoming QualityItem instead, which is
 // what this did before, meant an imported profile's captured snapshot was
-// written back on every sync without the user choosing it.
+// written back on every sync without the user choosing it. That snapshot is
+// no longer written at all: see the note by the QSSource constants for why it
+// could not be offered as a choice either.
 // Unknown quality names are skipped with a log warning instead of failing the entire sync —
 // this handles cases like group names ("WEB 2160p") appearing without sub-items, or
 // cross-type quality names (Radarr quality in a Sonarr profile). Fixes GitHub issue #10.
@@ -2792,4 +2810,114 @@ func applyQualitySize(item *arr.ArrQualityItem, sizes map[string]QualitySizeTrip
 	item.MinSize = copyFloatPtr(t.Min)
 	item.PreferredSize = copyFloatPtr(t.Preferred)
 	item.MaxSize = copyFloatPtr(t.Max)
+}
+
+// collectQualitySizes flattens a profile's items into quality name → sizes.
+// Leaves only: a group row carries no size, so including it would compare a
+// nil against a nil forever.
+func collectQualitySizes(items []arr.ArrQualityItem) map[string]QualitySizeTriple {
+	out := map[string]QualitySizeTriple{}
+	var walk func(its []arr.ArrQualityItem)
+	walk = func(its []arr.ArrQualityItem) {
+		for _, it := range its {
+			if len(it.Items) > 0 {
+				walk(it.Items)
+				continue
+			}
+			name := it.Name
+			if name == "" && it.Quality != nil {
+				name = it.Quality.Name
+			}
+			if name == "" {
+				continue
+			}
+			out[name] = QualitySizeTriple{Min: it.MinSize, Preferred: it.PreferredSize, Max: it.MaxSize}
+		}
+	}
+	walk(items)
+	return out
+}
+
+// diffQualitySizes reports the per-quality size changes between two snapshots,
+// one readable line each, sorted so the same change always reads the same way.
+//
+// Only qualities present in both are compared. A quality that appears or
+// disappears between the two is a structural change, which the allowed and
+// group comparisons already report, and saying it twice would double-count.
+//
+// A nil field in the new snapshot is "say nothing", not "set to unlimited":
+// UpdateProfile's preserveQualitySizes fills every nil from what the instance
+// already has, so the field never reaches the request body and the instance's
+// value stands. The comparison therefore has to be against the effective
+// value, new-or-else-old, and not against the raw new one.
+//
+// Getting that wrong is not cosmetic. The chosen set covers part of the
+// profile by design, 14 of 22 qualities for the guide's series set, so the
+// uncovered eight would each report a change to unlimited that never happens,
+// and each of those phantoms would mark the profile as needing a write. Every
+// sync would then push an identical body and never read as clean.
+func diffQualitySizes(before, after map[string]QualitySizeTriple) []string {
+	names := make([]string, 0, len(after))
+	for name := range after {
+		if _, ok := before[name]; ok {
+			names = append(names, name)
+		}
+	}
+	sort.Strings(names)
+
+	out := make([]string, 0, 4)
+	for _, name := range names {
+		b := before[name]
+		a := effectiveSizeTriple(before[name], after[name])
+		if sizeTripleEqual(b, a) {
+			continue
+		}
+		out = append(out, fmt.Sprintf("%s size: %s → %s", name, formatSizeTriple(b), formatSizeTriple(a)))
+	}
+	return out
+}
+
+// effectiveSizeTriple is what the instance will hold after a write: each field
+// the new snapshot names, and the current value wherever it says nothing.
+// Mirrors arr.preserveQualitySizes, which is what makes it true.
+func effectiveSizeTriple(current, next QualitySizeTriple) QualitySizeTriple {
+	pick := func(n, c *float64) *float64 {
+		if n == nil {
+			return c
+		}
+		return n
+	}
+	return QualitySizeTriple{
+		Min:       pick(next.Min, current.Min),
+		Preferred: pick(next.Preferred, current.Preferred),
+		Max:       pick(next.Max, current.Max),
+	}
+}
+
+func sizeTripleEqual(a, b QualitySizeTriple) bool {
+	return floatPtrEqual(a.Min, b.Min) &&
+		floatPtrEqual(a.Preferred, b.Preferred) &&
+		floatPtrEqual(a.Max, b.Max)
+}
+
+// floatPtrEqual treats nil as its own value rather than as zero. nil means the
+// instance has no number there, which its own UI shows as Unlimited, so nil and
+// 0.0 are different states and must not compare equal.
+func floatPtrEqual(a, b *float64) bool {
+	if a == nil || b == nil {
+		return a == nil && b == nil
+	}
+	// The API round-trips these as JSON floats, so compare with the same
+	// tolerance the instance-wide quality-size comparison uses.
+	return math.Abs(*a-*b) < 0.05
+}
+
+func formatSizeTriple(t QualitySizeTriple) string {
+	f := func(v *float64) string {
+		if v == nil {
+			return "unlimited"
+		}
+		return strconv.FormatFloat(*v, 'f', -1, 64)
+	}
+	return f(t.Min) + "/" + f(t.Preferred) + "/" + f(t.Max)
 }

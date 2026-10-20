@@ -156,30 +156,6 @@ func TestResolveQualitySizesUserSetIsAppScoped(t *testing.T) {
 	}
 }
 
-func TestResolveQualitySizesCapturedSkipsGroupRows(t *testing.T) {
-	f := func(v float64) *float64 { return &v }
-	items := []QualityItem{
-		{Name: "WEBDL-1080p", Allowed: true, MinSize: f(12), PreferredSize: f(50), MaxSize: f(100)},
-		// A group row carrying a size: the app keeps sizes on individual
-		// qualities, so a value here belongs to the members and must not be
-		// taken as the group's own.
-		{Name: "WEB 1080p", Allowed: true, Items: []string{"WEBDL-1080p"}, MinSize: f(999)},
-		{Name: "SDTV", Allowed: false},
-	}
-	got := ResolveQualitySizes(QualitySizeResolveInput{
-		Source: QSSourceCaptured, AppType: "sonarr", CapturedItems: items,
-	})
-	if len(got) != 1 {
-		t.Fatalf("want 1 entry, got %d: %v", len(got), got)
-	}
-	if _, ok := got["WEB 1080p"]; ok {
-		t.Error("a group row must not become a size source")
-	}
-	if *got["WEBDL-1080p"].Min != 12 {
-		t.Errorf("want 12, got %v", *got["WEBDL-1080p"].Min)
-	}
-}
-
 // --- The gate, and the request body ---
 
 func TestProfileQualitySizesGate(t *testing.T) {
@@ -189,16 +165,16 @@ func TestProfileQualitySizesGate(t *testing.T) {
 
 	// A definition list that still carries sizes means this instance keeps
 	// them in one shared list, where the per-profile path has no business.
-	if got := profileQualitySizes(req, ad, inst, nil, sizeDefs(true, "WEBDL-1080p")); got != nil {
+	if got := profileQualitySizes(req, ad, inst, sizeDefs(true, "WEBDL-1080p")); got != nil {
 		t.Errorf("shared-list instance: want nil, got %v", got)
 	}
 	// An empty list means the read failed or the instance is in a state we do
 	// not understand. Writing sizes on a guess is the worse mistake.
-	if got := profileQualitySizes(req, ad, inst, nil, nil); got != nil {
+	if got := profileQualitySizes(req, ad, inst, nil); got != nil {
 		t.Errorf("empty definition list: want nil, got %v", got)
 	}
 	// Sizes absent from the list means they live on the profiles.
-	got := profileQualitySizes(req, ad, inst, nil, sizeDefs(false, "WEBDL-1080p"))
+	got := profileQualitySizes(req, ad, inst, sizeDefs(false, "WEBDL-1080p"))
 	if got == nil || got["WEBDL-1080p"].Min == nil {
 		t.Fatalf("per-profile instance: want sizes, got %v", got)
 	}
@@ -371,5 +347,173 @@ func TestConfigCloneIsolatesQualitySizeState(t *testing.T) {
 	}
 	if got := cs.config.AutoSync.Rules[0].QualitySizeSource; got != "guide:bef99584217af744e404ed44a33af589" {
 		t.Errorf("rule source: want the guide set, got %q", got)
+	}
+}
+
+// --- The fixes a review found, each pinned so it cannot come back ---
+
+func TestDiffQualitySizesDetectsASizeOnlyChange(t *testing.T) {
+	// The bug this guards: nothing in the update path's "updated" computation
+	// looked at sizes, so a size-only change produced no delta, the PUT was
+	// never issued and the user was told "No changes". It appeared to work
+	// only when the sync happened to change something else too.
+	before := map[string]QualitySizeTriple{
+		"WEBDL-1080p":  {Min: ptrF(4), Preferred: ptrF(95), Max: ptrF(130)},
+		"WEBRip-1080p": {Min: ptrF(4), Preferred: ptrF(95), Max: ptrF(130)},
+	}
+	after := map[string]QualitySizeTriple{
+		"WEBDL-1080p":  {Min: ptrF(15), Preferred: ptrF(995), Max: ptrF(1000)},
+		"WEBRip-1080p": {Min: ptrF(4), Preferred: ptrF(95), Max: ptrF(130)},
+	}
+	got := diffQualitySizes(before, after)
+	if len(got) != 1 {
+		t.Fatalf("want one change, got %d: %v", len(got), got)
+	}
+	want := "WEBDL-1080p size: 4/95/130 → 15/995/1000"
+	if got[0] != want {
+		t.Errorf("got %q, want %q", got[0], want)
+	}
+	if n := len(diffQualitySizes(before, before)); n != 0 {
+		t.Errorf("identical snapshots must report nothing, got %d", n)
+	}
+}
+
+func TestDiffQualitySizesTreatsNilAsItsOwnValue(t *testing.T) {
+	// nil means the instance has no number there, which its own UI calls
+	// Unlimited. Comparing nil as zero would miss the change from Unlimited
+	// to a real cap, which is the one a user most wants to see.
+	before := map[string]QualitySizeTriple{"SDTV": {Min: ptrF(2), Preferred: ptrF(95), Max: nil}}
+	after := map[string]QualitySizeTriple{"SDTV": {Min: ptrF(2), Preferred: ptrF(95), Max: ptrF(100)}}
+	got := diffQualitySizes(before, after)
+	if len(got) != 1 || got[0] != "SDTV size: 2/95/unlimited → 2/95/100" {
+		t.Errorf("got %v", got)
+	}
+	// And a quality only one side knows about is a structural change, which
+	// the allowed and group comparisons already report.
+	if n := len(diffQualitySizes(before, map[string]QualitySizeTriple{
+		"SDTV":   {Min: ptrF(2), Preferred: ptrF(95), Max: nil},
+		"Raw-HD": {Min: ptrF(1)},
+	})); n != 0 {
+		t.Errorf("a new quality must not count as a size change, got %d", n)
+	}
+}
+
+func TestCollectQualitySizesSkipsGroupRows(t *testing.T) {
+	size := func(v float64) *float64 { return &v }
+	items := []arr.ArrQualityItem{
+		{Quality: &arr.ArrQualityRef{Name: "WEBDL-1080p"}, MinSize: size(4)},
+		{ID: 1000, Name: "WEB 720p", Items: []arr.ArrQualityItem{
+			{Quality: &arr.ArrQualityRef{Name: "WEBRip-720p"}, MinSize: size(3)},
+		}},
+	}
+	got := collectQualitySizes(items)
+	if len(got) != 2 {
+		t.Fatalf("want two leaves, got %d: %v", len(got), got)
+	}
+	if _, ok := got["WEB 720p"]; ok {
+		t.Error("a group row carries no size and must not be compared")
+	}
+	if got["WEBRip-720p"].Min == nil || *got["WEBRip-720p"].Min != 3 {
+		t.Errorf("group member: want 3, got %v", got["WEBRip-720p"].Min)
+	}
+}
+
+func TestResolveQualitySizesOverridesSurviveAnOffSource(t *testing.T) {
+	// Off means "take no set", not "write nothing". The resolution order
+	// override-then-set-then-nothing only means something if an override
+	// outlives a source that yields none, and it is what makes the useful
+	// case possible: set two qualities by hand, leave the other twenty.
+	for _, src := range []string{"", QSSourceOff} {
+		got := ResolveQualitySizes(QualitySizeResolveInput{
+			Source:    src,
+			AppType:   "sonarr",
+			GuideSets: testGuideSets(),
+			Overrides: map[string]QSOverride{"SDTV": {Min: 1, Preferred: 20, Max: 30}},
+		})
+		if len(got) != 1 {
+			t.Fatalf("source %q: want one entry, got %v", src, got)
+		}
+		if *got["SDTV"].Min != 1 {
+			t.Errorf("source %q: want the override, got %v", src, *got["SDTV"].Min)
+		}
+	}
+	// The upgrade guarantee is untouched: a rule from before this feature has
+	// neither a source nor overrides, so it still writes nothing.
+	if got := ResolveQualitySizes(QualitySizeResolveInput{AppType: "sonarr", GuideSets: testGuideSets()}); got != nil {
+		t.Errorf("an untouched rule must write nothing, got %v", got)
+	}
+}
+
+func TestFillQualitySizeIntentFallsBackToTheRule(t *testing.T) {
+	// Six of seven apply entry points never copied these two fields onto the
+	// request, so those syncs wrote no sizes while the rule said they should.
+	// Reconciling it here means a new entry point cannot repeat that.
+	rule := &AutoSyncRule{
+		QualitySizeSource:    "guide:bef99584217af744e404ed44a33af589",
+		QualitySizeOverrides: map[string]QSOverride{"SDTV": {Min: 1}},
+	}
+	sets := []QualitySizeSet{{ID: "abc", AppType: "sonarr"}}
+
+	// A caller that sends nothing gets the rule's intent.
+	req := SyncRequest{}
+	FillQualitySizeIntent(&req, rule, sets)
+	if req.QualitySizeSource != rule.QualitySizeSource {
+		t.Errorf("source: got %q, want the rule's", req.QualitySizeSource)
+	}
+	if len(req.QualitySizeOverrides) != 1 {
+		t.Errorf("overrides: want the rule's, got %v", req.QualitySizeOverrides)
+	}
+	if len(req.UserQualitySizeSets) != 1 {
+		t.Error("saved sets must always be attached")
+	}
+
+	// The editor owns both fields when it names a source, so an empty
+	// override map is honoured as "I removed the last one" rather than
+	// silently replaced by the rule's.
+	req2 := SyncRequest{QualitySizeSource: QSSourceOff, QualitySizeOverrides: map[string]QSOverride{}}
+	FillQualitySizeIntent(&req2, rule, sets)
+	if req2.QualitySizeSource != QSSourceOff {
+		t.Errorf("an explicit off must win, got %q", req2.QualitySizeSource)
+	}
+	if len(req2.QualitySizeOverrides) != 0 {
+		t.Errorf("an explicit empty map must win, got %v", req2.QualitySizeOverrides)
+	}
+
+	// No rule at all (an orphaned-history rerun) must not panic.
+	req3 := SyncRequest{}
+	FillQualitySizeIntent(&req3, nil, sets)
+	if req3.QualitySizeSource != "" {
+		t.Errorf("no rule: want no source, got %q", req3.QualitySizeSource)
+	}
+}
+
+func TestDiffQualitySizesDoesNotInventClears(t *testing.T) {
+	// Found by running a real sync: the chosen set covers part of the profile
+	// by design, so the uncovered qualities come through with nil sizes.
+	// preserveQualitySizes fills those from the instance, so nothing changes
+	// there, but comparing the raw new value reported each of them as a change
+	// to unlimited. Each phantom also marked the profile as needing a write,
+	// which would have made every sync push an identical body forever.
+	before := map[string]QualitySizeTriple{
+		"Bluray-480p": {Min: ptrF(2), Preferred: ptrF(95), Max: ptrF(100)},
+		"WEBDL-1080p": {Min: ptrF(4), Preferred: ptrF(95), Max: ptrF(130)},
+	}
+	after := map[string]QualitySizeTriple{
+		// Not in the set: all three nil, meaning "say nothing".
+		"Bluray-480p": {},
+		"WEBDL-1080p": {Min: ptrF(15), Preferred: ptrF(995), Max: ptrF(1000)},
+	}
+	got := diffQualitySizes(before, after)
+	if len(got) != 1 {
+		t.Fatalf("want only the real change, got %d: %v", len(got), got)
+	}
+	if got[0] != "WEBDL-1080p size: 4/95/130 → 15/995/1000" {
+		t.Errorf("got %q", got[0])
+	}
+	// And a partial triple keeps the fields it does not name.
+	partial := map[string]QualitySizeTriple{"Bluray-480p": {Min: ptrF(9)}}
+	got = diffQualitySizes(before, partial)
+	if len(got) != 1 || got[0] != "Bluray-480p size: 2/95/100 → 9/95/100" {
+		t.Errorf("partial triple: got %v", got)
 	}
 }

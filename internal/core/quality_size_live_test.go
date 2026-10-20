@@ -49,7 +49,7 @@ func TestLiveV5PerProfileSizes(t *testing.T) {
 	}}
 	ad := &AppData{QualitySizes: guide}
 	req := SyncRequest{QualitySizeSource: QSSourceGuide}
-	sizes := profileQualitySizes(req, ad, inst, nil, defs)
+	sizes := profileQualitySizes(req, ad, inst, defs)
 	if sizes == nil {
 		t.Fatal("resolver returned nothing on a per-profile instance")
 	}
@@ -246,7 +246,7 @@ func TestLiveOlderVersionsGetNoSizes(t *testing.T) {
 			Type:      "series",
 			Qualities: []QualitySizeEntry{{Quality: "WEBDL-1080p", Min: 15, Preferred: 995, Max: 1000}},
 		}}}
-		if got := profileQualitySizes(SyncRequest{QualitySizeSource: QSSourceGuide}, ad, inst, nil, defs); got != nil {
+		if got := profileQualitySizes(SyncRequest{QualitySizeSource: QSSourceGuide}, ad, inst, defs); got != nil {
 			t.Errorf("%s: want nil sizes on a shared-list instance, got %v", c.app, got)
 		}
 	}

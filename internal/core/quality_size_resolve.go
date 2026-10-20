@@ -40,9 +40,6 @@ type QualitySizeResolveInput struct {
 	// for Source == QSSourceGuide. Empty when the profile carries no
 	// reference, in which case the app's default set applies.
 	ProfileRef string
-	// CapturedItems are the quality items an imported profile captured from
-	// the instance it was exported from, used for Source == QSSourceCaptured.
-	CapturedItems []QualityItem
 }
 
 // DefaultQualitySizeSetType is the guide's default set for an app, used when a
@@ -80,17 +77,25 @@ func DefaultQualitySizeSetType(appType string) string {
 // matches what the Arr UI stores for Unlimited; reusing that here would nil
 // every size the guide publishes.
 func ResolveQualitySizes(in QualitySizeResolveInput) map[string]QualitySizeTriple {
-	src := in.Source
-	if src == "" || src == QSSourceOff {
-		return nil
-	}
-
 	out := map[string]QualitySizeTriple{}
 
 	// Step 2 first, so step 1 can overwrite it.
+	//
+	// Off is the absence of a set, not the absence of output. A per-quality
+	// override is an explicit instruction to write that number, and the
+	// resolution order only means something if it survives a source that
+	// yields nothing: otherwise "override, then the set, then nothing" would
+	// collapse to "the set, or nothing". It also makes the useful case
+	// possible, which is setting two qualities by hand and leaving the other
+	// twenty alone.
+	//
+	// The upgrade guarantee is untouched. A rule that existed before this
+	// feature has no source and no overrides, so it still resolves to nil and
+	// writes nothing. Overrides can only exist because someone typed them in.
+	src := in.Source
 	switch {
-	case src == QSSourceCaptured:
-		collectCapturedSizes(in.CapturedItems, out)
+	case src == "" || src == QSSourceOff:
+		// No set. Whatever the overrides say is the whole answer.
 	case strings.HasPrefix(src, QSSourceCustomPfx):
 		id := strings.TrimPrefix(src, QSSourceCustomPfx)
 		for _, set := range in.UserSets {
@@ -138,26 +143,6 @@ func ResolveQualitySizes(in QualitySizeResolveInput) map[string]QualitySizeTripl
 	return out
 }
 
-// collectCapturedSizes walks an imported profile's items and keeps the sizes it
-// captured from the instance it came from. Group rows are skipped: a group row
-// holds members together and the app keeps sizes on individual qualities, so a
-// size on one would belong to its members rather than to the row.
-func collectCapturedSizes(items []QualityItem, out map[string]QualitySizeTriple) {
-	for _, it := range items {
-		if len(it.Items) > 0 {
-			continue
-		}
-		if it.MinSize == nil && it.MaxSize == nil && it.PreferredSize == nil {
-			continue
-		}
-		out[it.Name] = QualitySizeTriple{
-			Min:       copyFloatPtr(it.MinSize),
-			Preferred: copyFloatPtr(it.PreferredSize),
-			Max:       copyFloatPtr(it.MaxSize),
-		}
-	}
-}
-
 func addSizeEntries(entries []QualitySizeEntry, out map[string]QualitySizeTriple) {
 	for _, e := range entries {
 		min, pref, max := e.Min, e.Preferred, e.Max
@@ -187,4 +172,28 @@ func findGuideSetByType(sets []*TrashQualitySize, qsType string) *TrashQualitySi
 		}
 	}
 	return nil
+}
+
+// FillQualitySizeIntent completes a sync request's per-profile size intent and
+// hands it the user's saved sets.
+//
+// A request that names a source is the profile editor applying a choice the
+// user just made, which may not be on the rule yet, so it owns both fields:
+// the overrides are taken exactly as sent, an empty map included, because that
+// is how the editor says "I removed the last one". Every other caller sends no
+// source and gets the rule's stored intent instead.
+//
+// This exists because the alternative was every entry point remembering to
+// copy two fields, and a review found that six of the seven did not: Sync now,
+// Update all, a rollback, a clone, the enable toggle and the rule dry-run all
+// omitted them, so each of those syncs wrote no sizes while the rule said it
+// should. Reconciling the two in one place means a new entry point cannot
+// silently stop writing sizes.
+func FillQualitySizeIntent(req *SyncRequest, rule *AutoSyncRule, sets []QualitySizeSet) {
+	req.UserQualitySizeSets = sets
+	if req.QualitySizeSource != "" || rule == nil {
+		return
+	}
+	req.QualitySizeSource = rule.QualitySizeSource
+	req.QualitySizeOverrides = rule.QualitySizeOverrides
 }

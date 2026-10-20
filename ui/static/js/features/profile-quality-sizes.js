@@ -46,9 +46,16 @@ export default {
         return;
       }
       if (!force && this.pdQSLoadedRuleId === rule.id) return;
+      // The response is slow: the backend reads the definition list and the
+      // profile from the Arr instance. Capture the rule this request is for
+      // and drop the answer if the editor has moved on, or one profile's rows
+      // land under another profile's name, and an unsaved source gets copied
+      // across with them.
+      const forRuleId = rule.id;
       this.pdQSLoading = true;
       try {
         const r = await fetch(`/api/auto-sync/rules/${rule.id}/quality-sizes`);
+        if (this.pdQSRule()?.id !== forRuleId) return;
         if (!r.ok) {
           // A profile the instance no longer has, or an instance that is
           // down. Say nothing rather than show an empty tab that looks like
@@ -58,6 +65,7 @@ export default {
           return;
         }
         const d = await r.json();
+        if (this.pdQSRule()?.id !== forRuleId) return;
         this.pdQSPerProfile = !!d.perProfileSizes;
         this.pdQSRows = d.rows || [];
         this.pdQSSets = d.sets || [];
@@ -92,10 +100,27 @@ export default {
 
     // --- The source selector ---
 
+    // The set the source currently names, or null for off. Read from the
+    // sets the endpoint shipped, which carry their own rows, so everything
+    // below reflects what the user just picked rather than what was saved.
+    pdQSActiveSet() {
+      const src = this.pdQSSource;
+      if (!src || src === 'off') return null;
+      return (this.pdQSSets || []).find(s => s.value === src) || null;
+    },
+
+    // This set's entry for one quality, or null when it does not name it.
+    // A set covering part of the profile is the normal case: the guide's
+    // series set covers 14 of a v5 profile's 22 qualities.
+    pdQSEntryFor(quality) {
+      const set = this.pdQSActiveSet();
+      if (!set) return null;
+      return (set.entries || []).find(e => e.quality === quality) || null;
+    },
+
     pdQSSourceLabel() {
       const src = this.pdQSSource;
       if (!src || src === 'off') return 'Off';
-      if (src === 'captured') return 'Captured from the instance';
       const set = (this.pdQSSets || []).find(s => s.value === src);
       if (set) return set.origin === 'user' ? set.name : this.pdQSSetTitle(set.name);
       // A set that no longer exists: a user set deleted elsewhere, or a guide
@@ -150,23 +175,10 @@ export default {
     // chosen for this profile unless the tab says so.
     pdQSRowSource(row) {
       if (this.pdQSIsCustom(row.quality)) return 'Your value';
-      if (!this.pdQSSource || this.pdQSSource === 'off') return 'Not written';
-      const set = (this.pdQSSets || []).find(s => s.value === this.pdQSSource);
+      const set = this.pdQSActiveSet();
       if (!set) return 'Not written';
-      // A set that does not name this quality leaves the instance's value
-      // alone, which is the normal case: the series set covers 14 of a v5
-      // profile's 22 qualities.
-      if (!this.pdQSSetCovers(row)) return 'Not in this set, left as is';
+      if (!this.pdQSEntryFor(row.quality)) return 'Not in this set, left as is';
       return set.origin === 'user' ? set.name : this.pdQSSetTitle(set.name);
-    },
-
-    // Whether the chosen source has a number for this row. Read off the
-    // backend's own resolution when the tab is in sync with the saved rule;
-    // after an unsaved source change the row's resolved value is stale, so
-    // fall back to saying nothing rather than to a wrong attribution.
-    pdQSSetCovers(row) {
-      if (this._pdQSTouched) return true;
-      return row.source === 'set' || row.source === 'override';
     },
 
     pdQSCurrentText(row) {
@@ -179,17 +191,18 @@ export default {
       return parts.join(' / ');
     },
 
+    // Resolved client-side in the same order the sync engine uses: an
+    // override, then the chosen set, then nothing. Not read from the row's
+    // resolved field, which the backend computed from the *saved* rule and
+    // would show the previous set's numbers under the new set's name.
     pdQSResolvedText(row) {
       if (this.pdQSIsCustom(row.quality)) {
         const ov = this.pdQSOverrides[row.quality];
         return QS_FIELDS.map(f => ov?.[f] ?? 0).join(' / ');
       }
-      if (!this.pdQSSetCovers(row)) return '—';
-      const parts = QS_FIELDS.map(f => {
-        const v = row.resolved?.[f];
-        return v === null || v === undefined ? '—' : v;
-      });
-      return parts.join(' / ');
+      const entry = this.pdQSEntryFor(row.quality);
+      if (!entry) return '—';
+      return QS_FIELDS.map(f => entry[f]).join(' / ');
     },
 
     // --- Per-quality overrides ---
@@ -203,11 +216,11 @@ export default {
       if (next[row.quality]) {
         delete next[row.quality];
       } else {
-        // Prefill with whatever the row would get today: the resolved value
-        // when the set covers it, otherwise the instance's own. A null means
-        // the instance has no value, which is its limit rather than 0, so it
-        // must not prefill 0 and silently cap everything.
-        const src = this.pdQSSetCovers(row) ? row.resolved : row.current;
+        // Prefill with whatever the row would get today: the chosen set's
+        // entry when it has one, otherwise the instance's own values. A null
+        // means the instance has no value, which is its limit rather than 0,
+        // so it must not prefill 0 and silently cap everything.
+        const src = this.pdQSEntryFor(row.quality) || row.current;
         const lim = this.pdQSLimits();
         next[row.quality] = {
           min: src?.min ?? 0,
@@ -248,16 +261,51 @@ export default {
 
     // What the basics-strip row shows.
     pdQSSummary() {
-      if (!this.pdQSSource || this.pdQSSource === 'off') return 'Off';
       const n = this.pdQSChangeCount();
       const base = this.pdQSSourceLabel();
+      // An override is written even with no set chosen, so "Off" on its own
+      // would understate what the next sync does.
       return n > 0 ? `${base} · ${n} change${n === 1 ? '' : 's'}` : base;
     },
 
+    // 'off' and not '': an empty source is indistinguishable from "the field
+    // was not sent", which every partial rule writer relies on, so an empty
+    // one could never be saved and this button did nothing.
     pdQSReset() {
-      this.pdQSSource = '';
+      this.pdQSSource = 'off';
       this.pdQSOverrides = {};
       this._pdQSTouched = true;
+    },
+
+    async pdQSDeleteSet(set) {
+      if (!set || set.origin !== 'user' || !set.id) return;
+      const ok = await new Promise(resolve => {
+        this.confirmModal = {
+          show: true,
+          title: 'Delete this size set?',
+          message: `"${set.name}" is removed from the list for every profile. Profiles already pointed at it keep the sizes they have until you choose something else.`,
+          confirmLabel: 'Delete',
+          onConfirm: () => resolve(true),
+          onCancel: () => resolve(false),
+        };
+      });
+      if (!ok) return;
+      try {
+        const r = await fetch(`/api/quality-size-sets/${set.id}`, { method: 'DELETE' });
+        const d = await r.json().catch(() => ({}));
+        if (!r.ok) {
+          // The backend refuses while a rule still points at it and names
+          // the instances, so the message is worth showing verbatim.
+          this.showToast(d.error || 'Could not delete the set', 'error');
+          return;
+        }
+        this.pdQSSets = (this.pdQSSets || []).filter(x => x.value !== set.value);
+        if (this.pdQSSource === set.value) this.pdQSReset();
+        this.showToast(`Deleted "${set.name}"`, 'success');
+      } catch (e) {
+        console.error('pdQSDeleteSet:', e);
+        this.showToast('Could not delete the set', 'error');
+      }
     },
 
     // --- Saving the current table as a reusable set ---
@@ -272,14 +320,15 @@ export default {
         return;
       }
       const app = this.profileDetail?.instance?.type;
+      // Built from the same client-side resolution the table shows, so the
+      // saved set is what the user is looking at. Reading row.resolved here
+      // took the *saved* rule's numbers, which meant picking a new set and
+      // saving it wrote the previous set's values under the new name.
       const qualities = [];
       for (const row of this.pdQSRows || []) {
-        let v = null;
-        if (this.pdQSIsCustom(row.quality)) {
-          v = this.pdQSOverrides[row.quality];
-        } else if (this.pdQSSetCovers(row) && row.resolved?.min !== null && row.resolved?.min !== undefined) {
-          v = row.resolved;
-        }
+        const v = this.pdQSIsCustom(row.quality)
+          ? this.pdQSOverrides[row.quality]
+          : this.pdQSEntryFor(row.quality);
         if (!v) continue;
         qualities.push({
           quality: row.quality,
@@ -306,7 +355,7 @@ export default {
         // Point the rule at the new set and drop the overrides it just baked
         // in, so the same numbers are not stored in two places.
         this.pdQSSets = [...(this.pdQSSets || []), {
-          value: `custom:${d.id}`, name: d.name, origin: 'user', qualities: qualities.length,
+          value: `custom:${d.id}`, name: d.name, origin: 'user', id: d.id, entries: qualities,
         }];
         this.pdQSSource = `custom:${d.id}`;
         this.pdQSOverrides = {};
