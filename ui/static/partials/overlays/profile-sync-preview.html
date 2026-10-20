@@ -1823,10 +1823,38 @@
             <!-- Where the numbers come from. The rest of the tab reacts to
                  this, which is why it sits at the top. -->
             <div class="card" style="padding:14px 16px;margin-bottom:14px">
-              <div style="font-size:13px;font-weight:600;color:var(--text-primary);margin-bottom:4px">Where these sizes come from</div>
+              <div style="font-size:13px;font-weight:600;color:var(--text-primary);margin-bottom:4px">
+                Where these sizes come from
+                <template x-if="pdQSInstanceName">
+                  <span style="font-weight:400;color:var(--text-muted)" x-text="' · ' + pdQSInstanceName"></span>
+                </template>
+              </div>
               <div style="font-size:12px;color:var(--text-muted);margin-bottom:10px">
                 Sizes apply to this profile only. A set that does not list a quality leaves that one as it is on the instance.
               </div>
+              <!-- The editor binds to the first instance of the app type,
+                   which is not a choice the user made. When the sizes are
+                   answered for a different one, say so rather than quietly
+                   showing another instance's numbers. -->
+              <template x-if="pdQSInstanceSwitched">
+                <div class="result-banner info" style="margin:0 0 10px">
+                  <div class="result-detail">
+                    Showing <strong x-text="pdQSInstanceName"></strong>, which is the one that keeps sizes on its quality profiles. Pick the target instance in the sync step to change this.
+                  </div>
+                </div>
+              </template>
+              <template x-if="pdQSFromSchema">
+                <div class="result-banner info" style="margin:0 0 10px">
+                  <div class="result-detail">
+                    This profile does not exist on <strong x-text="pdQSInstanceName"></strong> yet, so the "on the instance" column shows the defaults it would be created with.
+                  </div>
+                </div>
+              </template>
+              <template x-if="pdQSWarning">
+                <div class="result-banner error" style="margin:0 0 10px">
+                  <div class="result-detail" x-text="pdQSWarning"></div>
+                </div>
+              </template>
               <div style="display:flex;flex-wrap:wrap;gap:6px;align-items:center">
                 <button class="qs-type-btn"
                         :class="{ active: !pdQSSource || pdQSSource === 'off' }"

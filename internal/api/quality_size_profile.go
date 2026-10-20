@@ -5,7 +5,10 @@ import (
 	"fmt"
 	"net/http"
 	"sort"
+	"strconv"
 	"strings"
+	"sync"
+	"time"
 
 	"clonarr/internal/arr"
 	"clonarr/internal/core"
@@ -44,75 +47,177 @@ type qsTriple struct {
 	Max       *float64 `json:"max"`
 }
 
-// handleRuleQualitySizes returns everything the Quality size tab needs in one
-// call: whether this instance keeps sizes per profile at all, the rule's
-// current choice, the sets available to pick from, and a row per quality.
-func (s *Server) handleRuleQualitySizes(w http.ResponseWriter, r *http.Request) {
-	id := r.PathValue("id")
+// Capability cache. Answering "where do this instance's sizes live" costs a
+// GET /qualitydefinition, and the editor may have to ask about more than one
+// instance to find the right target, on every open. The sync engine never
+// reads this: it already holds the live definition list at the moment it
+// decides, so the authoritative check stays live and this only affects what
+// the UI offers.
+//
+// A short TTL rather than invalidation on instance edit, because the thing
+// that changes the answer is the user upgrading Sonarr, which clonarr never
+// sees. Both stale directions are safe: a stale "shared list" hides the tab
+// for a couple of minutes, and a stale "per profile" shows a tab whose writes
+// the live gate still refuses.
+type qsCapEntry struct {
+	perProfile bool
+	at         time.Time
+}
 
-	cfg := s.Core.Config.Get()
-	var rule *core.AutoSyncRule
-	for i := range cfg.AutoSync.Rules {
-		if cfg.AutoSync.Rules[i].ID == id {
-			rule = &cfg.AutoSync.Rules[i]
-			break
+var (
+	qsCapCache sync.Map // instance ID -> qsCapEntry
+	qsCapTTL   = 2 * time.Minute
+)
+
+func (s *Server) instanceKeepsSizesPerProfile(inst core.Instance) (bool, error) {
+	if v, ok := qsCapCache.Load(inst.ID); ok {
+		if e, ok := v.(qsCapEntry); ok && time.Since(e.at) < qsCapTTL {
+			return e.perProfile, nil
 		}
 	}
-	if rule == nil {
-		writeError(w, 404, "Rule not found")
-		return
-	}
-	inst, ok := s.Core.Config.GetInstance(rule.InstanceID)
-	if !ok {
-		writeError(w, 404, "Instance not found")
-		return
-	}
-
 	client := core.NewArrClientFor(inst, s.Core.HTTPClient)
 	defs, err := client.ListQualityDefinitions()
 	if err != nil {
-		writeError(w, 502, "Failed to read quality sizes: "+err.Error())
+		return false, err
+	}
+	// An empty list is not an answer: it means the read came back wrong, and
+	// offering a tab that cannot write anything is the worse mistake.
+	perProfile := len(defs) > 0 && !arr.QualityDefinitionsCarrySizes(defs)
+	qsCapCache.Store(inst.ID, qsCapEntry{perProfile: perProfile, at: time.Now()})
+	return perProfile, nil
+}
+
+// handleProfileQualitySizes returns everything the profile editor's Quality
+// size tab needs in one call.
+//
+// Keyed on the instance and the target Arr profile rather than on a sync rule,
+// which is what it used to be. A rule only exists after the first sync, so
+// keying on one meant the tab could not appear until the user had already
+// synced the profile once with no sizes, then gone back in to set them and
+// synced again. Two passes for something that should take one.
+//
+//	app          required, "radarr" or "sonarr"
+//	instanceId   optional, the instance the editor is pointed at
+//	arrProfileId optional, 0 or absent for a profile that does not exist yet
+//
+// The instance is chosen here rather than by the caller, because the caller
+// cannot know which of its instances keeps sizes per profile without asking,
+// and in a mixed Sonarr 4 and 5 setup the editor is bound to whichever
+// instance happens to come first in the config. Preference goes to the one the
+// caller names; failing that, the first candidate that qualifies. The response
+// always says which instance it answered for, so the tab can label itself
+// instead of leaving the user to guess.
+func (s *Server) handleProfileQualitySizes(w http.ResponseWriter, r *http.Request) {
+	appType := r.URL.Query().Get("app")
+	if appType != "radarr" && appType != "sonarr" {
+		writeError(w, 400, "app must be radarr or sonarr")
 		return
 	}
-	// An empty list is not an answer. Reporting "per profile" on a failed read
-	// would offer the user a tab that cannot write anything.
-	perProfile := len(defs) > 0 && !arr.QualityDefinitionsCarrySizes(defs)
+	preferred := r.URL.Query().Get("instanceId")
+	arrProfileID, _ := strconv.Atoi(r.URL.Query().Get("arrProfileId"))
+
+	cfg := s.Core.Config.Get()
+	candidates := make([]core.Instance, 0, 2)
+	for _, inst := range cfg.Instances {
+		if inst.Type != appType {
+			continue
+		}
+		if inst.ID == preferred {
+			candidates = append([]core.Instance{inst}, candidates...)
+			continue
+		}
+		candidates = append(candidates, inst)
+	}
 
 	resp := map[string]any{
-		"perProfileSizes": perProfile,
-		"source":          rule.QualitySizeSource,
-		"overrides":       rule.QualitySizeOverrides,
-		"sets":            s.qsAvailableSets(inst.Type),
-		"defaultSetType":  core.DefaultQualitySizeSetType(inst.Type),
+		"perProfileSizes": false,
+		"source":          "",
+		"overrides":       map[string]core.QSOverride{},
+		"sets":            s.qsAvailableSets(appType),
+		"defaultSetType":  core.DefaultQualitySizeSetType(appType),
+		"rows":            []qsProfileRow{},
 	}
-	if !perProfile {
-		// Nothing more to say: on these versions the sizes live in the shared
-		// list and the instance-wide tab is the right place for them.
-		resp["rows"] = []qsProfileRow{}
+
+	var target *core.Instance
+	var lastErr error
+	for i := range candidates {
+		perProfile, err := s.instanceKeepsSizesPerProfile(candidates[i])
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		if perProfile {
+			target = &candidates[i]
+			break
+		}
+	}
+	if target == nil {
+		// Nothing to set here. Not an error: on Radarr and Sonarr 4 the sizes
+		// live in one shared list and the instance-wide tab is the right
+		// place, so the editor simply shows no Quality size tab.
+		if lastErr != nil && len(candidates) > 0 {
+			resp["warning"] = "Could not reach " + candidates[0].Name + ": " + lastErr.Error()
+		}
 		writeJSON(w, resp)
 		return
 	}
 
-	profile, err := client.GetProfile(rule.ArrProfileID)
-	if err != nil {
-		writeError(w, 502, "Failed to read the quality profile: "+err.Error())
-		return
+	resp["perProfileSizes"] = true
+	resp["instanceId"] = target.ID
+	resp["instanceName"] = target.Name
+	// True when the caller was pointed at a different instance, so the tab can
+	// say whose numbers it is showing rather than quietly swapping them.
+	resp["instanceSwitched"] = preferred != "" && preferred != target.ID
+
+	client := core.NewArrClientFor(*target, s.Core.HTTPClient)
+
+	// Where the "on the instance" column comes from. An existing profile has
+	// real values; one that does not exist yet gets the blank profile the app
+	// offers as a starting point, which on these versions carries the app's
+	// own default sizes and is the same source CreateProfile builds from.
+	var items []arr.ArrQualityItem
+	if arrProfileID > 0 {
+		profile, err := client.GetProfile(arrProfileID)
+		if err != nil {
+			writeError(w, 502, "Failed to read the quality profile: "+err.Error())
+			return
+		}
+		items = profile.Items
+	} else {
+		schema, err := client.GetProfileSchema()
+		if err != nil {
+			writeError(w, 502, "Failed to read the profile template: "+err.Error())
+			return
+		}
+		items = schema.Items
+		resp["fromSchema"] = true
 	}
 
-	ad := s.Core.Trash.GetAppData(inst.Type)
+	// The rule's stored intent, when there is a rule yet.
+	var ruleSource string
+	var ruleOverrides map[string]core.QSOverride
+	if rule := s.findRuleFor(target.ID, arrProfileID); rule != nil {
+		ruleSource = rule.QualitySizeSource
+		ruleOverrides = rule.QualitySizeOverrides
+	}
+	resp["source"] = ruleSource
+	if ruleOverrides != nil {
+		resp["overrides"] = ruleOverrides
+	}
+
 	var guideSets []*core.TrashQualitySize
-	if ad != nil {
+	if ad := s.Core.Trash.GetAppData(target.Type); ad != nil {
 		guideSets = ad.QualitySizes
 	}
 	sizes := core.ResolveQualitySizes(core.QualitySizeResolveInput{
-		Source:    rule.QualitySizeSource,
-		Overrides: rule.QualitySizeOverrides,
-		AppType:   inst.Type,
+		Source:    ruleSource,
+		Overrides: ruleOverrides,
+		AppType:   target.Type,
 		GuideSets: guideSets,
 		UserSets:  cfg.QualitySizeSets,
 	})
 
-	resp["rows"] = buildQSProfileRows(profile.Items, sizes, rule.QualitySizeOverrides)
+	resp["rows"] = buildQSProfileRows(items, sizes, ruleOverrides)
 	writeJSON(w, resp)
 }
 

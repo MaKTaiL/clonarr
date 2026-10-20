@@ -130,7 +130,7 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/auto-sync/rules/import", s.handleImportRule)
 	// Per-profile quality sizes (Sonarr v5 and later, where sizes live on the
 	// profile rather than in the shared definition list).
-	mux.HandleFunc("GET /api/auto-sync/rules/{id}/quality-sizes", s.handleRuleQualitySizes)
+	mux.HandleFunc("GET /api/profile-quality-sizes", s.handleProfileQualitySizes)
 	mux.HandleFunc("POST /api/quality-size-sets", s.handleSaveQualitySizeSet)
 	mux.HandleFunc("DELETE /api/quality-size-sets/{id}", s.handleDeleteQualitySizeSet)
 

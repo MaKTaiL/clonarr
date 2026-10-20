@@ -20,7 +20,7 @@ export default {
     pdQSSets: [],
     pdQSDefaultSetType: '',
     pdQSLoading: false,
-    pdQSLoadedRuleId: null,
+    pdQSLoadedKey: null,
     // Editor state, saved with the rule.
     pdQSSource: '',
     pdQSOverrides: {},
@@ -29,6 +29,18 @@ export default {
     // everything would show 22 rows of inputs to set 2.
     pdQSShowAll: false,
     pdQSSaveSetName: '',
+    // Which instance the numbers belong to, answered by the backend. In a
+    // mixed Sonarr 4 and 5 setup the editor is bound to whichever instance
+    // comes first in the config, which is not a decision, so the tab names
+    // the one it actually resolved against.
+    pdQSInstanceName: '',
+    pdQSInstanceId: '',
+    pdQSInstanceSwitched: false,
+    // True when "on the instance" is the app's blank-profile template rather
+    // than a profile that exists. The honest wording for a profile the user
+    // has not created yet.
+    pdQSFromSchema: false,
+    pdQSWarning: '',
     // Set on the first edit in this tab. Until then the saved rule is the
     // truth; afterwards the editor's own state is, so a reload must not
     // overwrite an unsaved change.
@@ -39,38 +51,52 @@ export default {
     // --- Loading ---
 
     async pdQSLoad(force = false) {
-      const rule = this.pdQSRule();
-      if (!rule) {
+      const app = this.pdQSAppType();
+      if (!app) {
         this.pdQSPerProfile = false;
         this.pdQSRows = [];
         return;
       }
-      if (!force && this.pdQSLoadedRuleId === rule.id) return;
-      // The response is slow: the backend reads the definition list and the
-      // profile from the Arr instance. Capture the rule this request is for
-      // and drop the answer if the editor has moved on, or one profile's rows
-      // land under another profile's name, and an unsaved source gets copied
-      // across with them.
-      const forRuleId = rule.id;
+      // Keyed on the target, not on a rule. A rule only exists after the
+      // first sync, so keying on one meant the tab could not appear until the
+      // user had synced the profile once with no sizes, gone back in to set
+      // them, and synced again.
+      const arrId = this.pdQSArrProfileId();
+      const prefer = this.pdQSPreferredInstanceId();
+      const key = `${app}|${prefer}|${arrId}`;
+      if (!force && this.pdQSLoadedKey === key) return;
+      // The backend may have to read the definition list from more than one
+      // instance plus a profile, so this is slow enough to lose a race with
+      // the user opening another profile. Drop an answer that no longer
+      // matches what the editor is asking about.
       this.pdQSLoading = true;
       try {
-        const r = await fetch(`/api/auto-sync/rules/${rule.id}/quality-sizes`);
-        if (this.pdQSRule()?.id !== forRuleId) return;
+        const q = new URLSearchParams({ app, arrProfileId: String(arrId) });
+        if (prefer) q.set('instanceId', prefer);
+        const r = await fetch(`/api/profile-quality-sizes?${q}`);
+        const stillCurrent = () =>
+          `${this.pdQSAppType()}|${this.pdQSPreferredInstanceId()}|${this.pdQSArrProfileId()}` === key;
+        if (!stillCurrent()) return;
         if (!r.ok) {
-          // A profile the instance no longer has, or an instance that is
-          // down. Say nothing rather than show an empty tab that looks like
-          // "this profile has no qualities".
+          // An instance that is down, or a profile it no longer has. Say
+          // nothing rather than show an empty tab that reads as "this profile
+          // has no qualities".
           this.pdQSPerProfile = false;
           this.pdQSRows = [];
           return;
         }
         const d = await r.json();
-        if (this.pdQSRule()?.id !== forRuleId) return;
+        if (!stillCurrent()) return;
         this.pdQSPerProfile = !!d.perProfileSizes;
         this.pdQSRows = d.rows || [];
         this.pdQSSets = d.sets || [];
         this.pdQSDefaultSetType = d.defaultSetType || '';
-        this.pdQSLoadedRuleId = rule.id;
+        this.pdQSInstanceName = d.instanceName || '';
+        this.pdQSInstanceId = d.instanceId || '';
+        this.pdQSInstanceSwitched = !!d.instanceSwitched;
+        this.pdQSFromSchema = !!d.fromSchema;
+        this.pdQSWarning = d.warning || '';
+        this.pdQSLoadedKey = key;
         // The rule on disk is the truth on open; the editor's own state takes
         // over from the first edit.
         if (this.pdQSSource === '' && !this._pdQSTouched) {
@@ -84,14 +110,30 @@ export default {
       }
     },
 
-    // The rule this editor is attached to. The tab needs a saved rule because
-    // the sizes are read from the live profile on the instance, so there is
-    // nothing to show for a profile that does not exist yet.
-    pdQSRule() {
-      const inst = this.profileDetail?.instance;
-      const arrId = this.profileDetail?._editLockedArrProfileId;
-      if (!inst || !arrId) return null;
-      return this.findAutoSyncRule(inst.id, arrId);
+    // Which app the open profile belongs to.
+    pdQSAppType() {
+      return this.profileDetail?.instance?.type
+        || this.profileDetail?.profile?.appType
+        || '';
+    },
+
+    // The Arr profile the editor is aimed at, or 0 for one that does not
+    // exist yet. The locked id wins, because that is the edit-an-existing-rule
+    // flow; the sync form's value covers "target this unmanaged profile".
+    pdQSArrProfileId() {
+      const locked = this.profileDetail?._editLockedArrProfileId;
+      if (locked) return locked;
+      const n = parseInt(this.syncForm?.arrProfileId, 10);
+      return Number.isFinite(n) && n > 0 ? n : 0;
+    },
+
+    // The instance to prefer. The sync modal is where the target actually
+    // becomes real, so its choice wins once it has one; before that the
+    // editor's own binding is the best guess, and the backend is free to
+    // answer for a different instance of the same app when that one keeps its
+    // sizes in the shared list.
+    pdQSPreferredInstanceId() {
+      return this.syncForm?.instanceId || this.profileDetail?.instance?.id || '';
     },
 
     pdQSShowTab() {

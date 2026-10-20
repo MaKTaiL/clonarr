@@ -874,12 +874,17 @@ export default {
       this.pdQSOverrides = {};
       this.pdQSRows = [];
       this.pdQSPerProfile = false;
-      this.pdQSLoadedRuleId = null;
+      this.pdQSLoadedKey = null;
       this.pdQSShowAll = false;
       this.pdQSSaveSetName = '';
       this._pdQSTouched = false;
 
       this.profileDetail = { instance: inst, profile: profile, detail: null };
+      // Per-profile quality sizes. Asked for on every open, including for a
+      // profile that does not exist on the instance yet: the tab is keyed on
+      // the target rather than on a sync rule, so it no longer has to wait
+      // for a first sync before it can be used.
+      this.pdQSLoad(true);
       // Pre-load languages and quality presets for this instance (for override dropdowns)
       this.getLanguagesForInstance(inst.id);
       if (!this.pbQualityPresets.length) {
@@ -1040,10 +1045,6 @@ export default {
       this.pdQSSource = rule.qualitySizeSource || '';
       this.pdQSOverrides = { ...(rule.qualitySizeOverrides || {}) };
       this._pdQSTouched = false;
-      // Load here rather than when the tab opens, because the tab button has
-      // to know whether to appear at all and that answer comes from the same
-      // call. One request, and it reads the live profile on the instance,
-      // which is what makes the "on the instance" column real.
       this.pdQSLoad(true);
       // qualityOverrides + qualityStructure passthrough.
       if (rule.qualityStructure && rule.qualityStructure.length > 0) {
@@ -1761,6 +1762,10 @@ export default {
       this.syncForm.instanceName = inst.name;
       this.syncForm.arrProfileId = '0';
       this.syncPreview = null;
+      // The target instance is what decides whether sizes live on the profile
+      // at all, so the Quality size tab follows this choice rather than
+      // warning about it from another screen.
+      this.pdQSLoad(true);
       await this._loadSyncInstanceData(inst.id, this.syncForm.profileTrashId || this.syncForm.importedProfileId);
     },
 
