@@ -263,10 +263,19 @@ func (d *DriftRunner) runOnceInternal(ctx context.Context, autoApply bool) ([]Dr
 		}
 		customCFs := d.app.CustomCFs.List(w.instance.Type)
 
+		// The target has to carry the same sizes the apply would write.
+		// If it does not, drift reports a difference that syncing cannot
+		// resolve and the rule never goes clean again.
+		sizeReq := SyncRequest{
+			QualitySizeSource:    w.rule.QualitySizeSource,
+			QualitySizeOverrides: w.rule.QualitySizeOverrides,
+			UserQualitySizeSets:  d.app.Config.Get().QualitySizeSets,
+		}
 		target, buildErr := BuildArrProfile(
 			profile, appData, snap.qDefs, snap.langs, nameToID,
 			selectedCFs, current.Name, w.rule.ScoreOverrides,
 			customCFs, w.rule.QualityStructure,
+			profileQualitySizes(sizeReq, appData, w.instance, nil, snap.qDefs),
 		)
 		if buildErr != nil {
 			errs = append(errs, fmt.Sprintf("rule %s: build target: %v", w.rule.ID, buildErr))

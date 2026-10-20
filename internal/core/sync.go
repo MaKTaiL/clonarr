@@ -194,6 +194,16 @@ type SyncRequest struct {
 	// (Compare apply, rollback, Sync All) must leave the stored value alone
 	// rather than reset it to off.
 	CustomizeEnabled *bool `json:"customizeEnabled,omitempty"`
+	// QualitySizeSource and QualitySizeOverrides mirror the rule's per-profile
+	// quality size choice. Only acted on when the target instance keeps sizes
+	// on its profiles rather than in one shared list. Empty source means off.
+	QualitySizeSource    string                `json:"qualitySizeSource,omitempty"`
+	QualitySizeOverrides map[string]QSOverride `json:"qualitySizeOverrides,omitempty"`
+	// UserQualitySizeSets is filled in by the caller from config, never from
+	// the request body, which is why it carries json:"-". A caller that
+	// forgets it leaves a custom: source resolving to nothing, so no sizes are
+	// written: wrong, but in the direction that touches nobody's profile.
+	UserQualitySizeSets []QualitySizeSet `json:"-"`
 }
 
 // SyncOverrides allows users to override specific profile settings from TRaSH defaults.
@@ -794,7 +804,9 @@ func BuildSyncPlan(ad *AppData, instance Instance, req SyncRequest, imported *Im
 				for i := range qualityDefs {
 					qualityByName[qualityDefs[i].Quality.Name] = &qualityDefs[i]
 				}
-				newItems, err := resolveQualityItems(desiredItems, qualityByName)
+				// Same size map the apply will use, so a preview cannot
+				// disagree with what gets written.
+				newItems, err := resolveQualityItems(desiredItems, qualityByName, profileQualitySizes(req, ad, instance, imported, qualityDefs))
 				if err == nil {
 					// Apply legacy flat overrides when no structure override
 					if len(req.QualityStructure) == 0 && len(req.QualityOverrides) > 0 {
@@ -1184,7 +1196,7 @@ func ExecuteSyncPlan(ad *AppData, instance Instance, req SyncRequest, plan *Sync
 			delete(selectedCFsMap, id)
 		}
 
-		arrProfile, err := BuildArrProfile(profile, ad, qualityDefs, languages, nameToID, selectedCFsMap, req.ProfileName, cfScoreOverrides, customCFs, req.QualityStructure)
+		arrProfile, err := BuildArrProfile(profile, ad, qualityDefs, languages, nameToID, selectedCFsMap, req.ProfileName, cfScoreOverrides, customCFs, req.QualityStructure, profileQualitySizes(req, ad, instance, imported, qualityDefs))
 		if err != nil {
 			result.Errors = append(result.Errors, fmt.Sprintf("build profile: %v", err))
 			return result, nil
@@ -1587,7 +1599,7 @@ func ExecuteSyncPlan(ad *AppData, instance Instance, req SyncRequest, plan *Sync
 					itemsSource = req.QualityStructure
 				}
 
-				newItems, err := resolveQualityItems(itemsSource, qualityByName)
+				newItems, err := resolveQualityItems(itemsSource, qualityByName, profileQualitySizes(req, ad, instance, imported, qualityDefs))
 				if err != nil {
 					result.Errors = append(result.Errors, fmt.Sprintf("resolve quality items: %v", err))
 				} else {
@@ -1873,6 +1885,7 @@ func BuildArrProfile(
 	cfScoreOverrides map[string]int,
 	customCFs []CustomCF,
 	qualityStructureOverride []QualityItem,
+	qualitySizes map[string]QualitySizeTriple,
 ) (*arr.ArrQualityProfile, error) {
 	// Build quality name → definition map
 	qualityByName := make(map[string]*arr.ArrQualityDefinition)
@@ -1887,7 +1900,7 @@ func BuildArrProfile(
 	if len(qualityStructureOverride) > 0 {
 		itemsSource = qualityStructureOverride
 	}
-	items, err := resolveQualityItems(itemsSource, qualityByName)
+	items, err := resolveQualityItems(itemsSource, qualityByName, qualitySizes)
 	if err != nil {
 		return nil, fmt.Errorf("resolve quality items: %w", err)
 	}
@@ -2200,11 +2213,58 @@ func extractArrErrorMessages(s string) string {
 	return ""
 }
 
+// profileQualitySizes decides the per-profile quality sizes for one sync, or
+// returns nil when none should be written.
+//
+// The gate is the shape of the instance's quality definition list, never a
+// version string: a list that still carries the three size fields means this
+// instance keeps sizes in one shared list, where the per-profile path has no
+// business. An empty list means the read failed or the instance is in a state
+// we do not understand, and writing sizes into profiles on a guess is the
+// worse of the two mistakes, so that answers nil too.
+func profileQualitySizes(req SyncRequest, ad *AppData, instance Instance, imported *ImportedProfile, qualityDefs []arr.ArrQualityDefinition) map[string]QualitySizeTriple {
+	if len(qualityDefs) == 0 || arr.QualityDefinitionsCarrySizes(qualityDefs) {
+		return nil
+	}
+	in := QualitySizeResolveInput{
+		Source:    req.QualitySizeSource,
+		Overrides: req.QualitySizeOverrides,
+		AppType:   instance.Type,
+		UserSets:  req.UserQualitySizeSets,
+	}
+	if ad != nil {
+		in.GuideSets = ad.QualitySizes
+	}
+	if imported != nil {
+		in.CapturedItems = imported.Qualities
+	}
+	// ProfileRef stays empty until the guide publishes
+	// trash_quality_definition on its profiles, at which point the guide
+	// source resolves a profile's own reference first and the app default
+	// second. Until then the guide source falls back to the app default,
+	// which is what the guide author stated it means.
+	return ResolveQualitySizes(in)
+}
+
 // resolveQualityItems converts TRaSH quality items to Arr format using quality definitions.
+//
+// sizes carries per-profile quality sizes for the versions that keep them on
+// the profile, keyed by quality name. Nil means write no sizes at all, which
+// is what Radarr and Sonarr 4 have always received and what a rule with its
+// size source off receives on any version. Sizes are applied at the leaves
+// only: a single quality, or a member of a group. A group row never gets one,
+// measured against Sonarr 5.0.0 where not one of 24 group rows carried a size
+// while 41 of 48 members did, and the app's own /qualityprofile/schema puts
+// sizes on every quality and member but on none of its 4 group rows.
+//
+// This is the only path from stored intent to the three size fields in the
+// request body. Reading them off the incoming QualityItem instead, which is
+// what this did before, meant an imported profile's captured snapshot was
+// written back on every sync without the user choosing it.
 // Unknown quality names are skipped with a log warning instead of failing the entire sync —
 // this handles cases like group names ("WEB 2160p") appearing without sub-items, or
 // cross-type quality names (Radarr quality in a Sonarr profile). Fixes GitHub issue #10.
-func resolveQualityItems(trashItems []QualityItem, qualityByName map[string]*arr.ArrQualityDefinition) ([]arr.ArrQualityItem, error) {
+func resolveQualityItems(trashItems []QualityItem, qualityByName map[string]*arr.ArrQualityDefinition, sizes map[string]QualitySizeTriple) ([]arr.ArrQualityItem, error) {
 	items := make([]arr.ArrQualityItem, 0, len(trashItems))
 	groupID := 1000
 
@@ -2216,7 +2276,7 @@ func resolveQualityItems(trashItems []QualityItem, qualityByName map[string]*arr
 				log.Printf("Quality %q not found in definitions — skipping (may be a group name without sub-items or wrong app type)", ti.Name)
 				continue
 			}
-			items = append(items, arr.ArrQualityItem{
+			qi := arr.ArrQualityItem{
 				Quality: &arr.ArrQualityRef{
 					ID:         def.Quality.ID,
 					Name:       def.Quality.Name,
@@ -2226,12 +2286,9 @@ func resolveQualityItems(trashItems []QualityItem, qualityByName map[string]*arr
 				},
 				Items:   []arr.ArrQualityItem{},
 				Allowed: ti.Allowed,
-				// Nil today, and nil stays out of the body. When the guide
-				// starts publishing per-profile sizes these carry them.
-				MinSize:       ti.MinSize,
-				MaxSize:       ti.MaxSize,
-				PreferredSize: ti.PreferredSize,
-			})
+			}
+			applyQualitySize(&qi, sizes, def.Quality.Name)
+			items = append(items, qi)
 		} else {
 			// Quality group — resolve each sub-item, skip unknowns.
 			// Children inherit the group's Allowed state. Hardcoding true
@@ -2251,7 +2308,7 @@ func resolveQualityItems(trashItems []QualityItem, qualityByName map[string]*arr
 					log.Printf("Quality %q not found in definitions (group %q) — skipping member", subName, ti.Name)
 					continue
 				}
-				nested = append(nested, arr.ArrQualityItem{
+				member := arr.ArrQualityItem{
 					Quality: &arr.ArrQualityRef{
 						ID:         def.Quality.ID,
 						Name:       def.Quality.Name,
@@ -2261,12 +2318,13 @@ func resolveQualityItems(trashItems []QualityItem, qualityByName map[string]*arr
 					},
 					Items:   []arr.ArrQualityItem{},
 					Allowed: ti.Allowed,
-					// Group members inherit the group's sizes. A member-level
-					// value, if the guide ever has one, would be set here.
-					MinSize:       ti.MinSize,
-					MaxSize:       ti.MaxSize,
-					PreferredSize: ti.PreferredSize,
-				})
+				}
+				// By the member's own name, not the group's. The guide's sets
+				// disagree inside groups (one holds 50.4 next to 15, another
+				// 94.6 next to 25), so taking the row's value for everything
+				// under it would quietly flatten them.
+				applyQualitySize(&member, sizes, def.Quality.Name)
+				nested = append(nested, member)
 			}
 			// Reverse so first-in-clonarr-UI (top of group) ends up last in Arr API.
 			// Same convention as the top-level reversal below: Arr renders nested top-down
@@ -2636,4 +2694,24 @@ func resolveScoreCustom(cfID string, cf *CustomCF, scoreCtx string, cfScoreOverr
 		}
 	}
 	return 0
+}
+
+// applyQualitySize stamps one quality's sizes onto an Arr item. A nil map, a
+// missing name or a nil field all leave the item alone, which keeps the field
+// out of the JSON body and leaves whatever the instance has in place.
+//
+// The pointers are copied rather than shared: the same resolved triple is
+// applied to every profile in a Sync All run, and handing out the same pointer
+// would let one profile's later edit reach another's body.
+func applyQualitySize(item *arr.ArrQualityItem, sizes map[string]QualitySizeTriple, name string) {
+	if len(sizes) == 0 {
+		return
+	}
+	t, ok := sizes[name]
+	if !ok {
+		return
+	}
+	item.MinSize = copyFloatPtr(t.Min)
+	item.PreferredSize = copyFloatPtr(t.Preferred)
+	item.MaxSize = copyFloatPtr(t.Max)
 }

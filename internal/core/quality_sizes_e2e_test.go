@@ -51,7 +51,7 @@ func TestResolvedItemsKeepInstanceQualitySizes(t *testing.T) {
 		{Name: "Unknown", Allowed: false},
 	}
 
-	built, err := resolveQualityItems(trashItems, byName)
+	built, err := resolveQualityItems(trashItems, byName, nil)
 	if err != nil {
 		t.Fatalf("resolveQualityItems: %v", err)
 	}

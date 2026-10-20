@@ -352,6 +352,9 @@ func (app *App) runAutoSyncRule(rule AutoSyncRule, currentCommit string, parent 
 		QualityStructure: rule.QualityStructure,
 		Behavior:         rule.Behavior,
 		Overrides:        rule.Overrides,
+
+		QualitySizeSource:    rule.QualitySizeSource,
+		QualitySizeOverrides: rule.QualitySizeOverrides,
 	}
 	if rule.ProfileSource == "imported" {
 		req.ImportedProfileID = rule.ImportedProfileID
@@ -376,6 +379,7 @@ func (app *App) runAutoSyncRule(rule AutoSyncRule, currentCommit string, parent 
 	// retry on next pass.
 	customCFs := app.CustomCFs.List(inst.Type)
 	lastSyncedCFs := app.GetLastSyncedCFs(req.InstanceID, req.ArrProfileID, req.Behavior)
+	req.UserQualitySizeSets = app.Config.Get().QualitySizeSets
 	plan, err := BuildSyncPlan(ad, inst, req, imported, customCFs, lastSyncedCFs, app.HTTPClient, op)
 	if err != nil {
 		rawMsg := fmt.Sprintf("plan failed: %v", err)

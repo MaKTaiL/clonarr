@@ -53,6 +53,14 @@ type ExportedRule struct {
 	Behavior         *SyncBehavior   `json:"behavior,omitempty"`
 	Overrides        *SyncOverrides  `json:"overrides,omitempty"`
 	Description      string          `json:"description,omitempty"`
+	// Per-profile quality sizes. A guide: source travels fine, since a
+	// trash_id means the same thing everywhere. A custom: source names a set
+	// that lives on the machine it was saved on and is not bundled here, so on
+	// another install it resolves to nothing and no sizes are written, which
+	// is the same as off. The overrides travel either way: they are plain
+	// numbers.
+	QualitySizeSource    string                `json:"qualitySizeSource,omitempty"`
+	QualitySizeOverrides map[string]QSOverride `json:"qualitySizeOverrides,omitempty"`
 }
 
 // BuildSyncRuleExport assembles the portable export for a rule. customCFByID is
@@ -79,6 +87,9 @@ func BuildSyncRuleExport(rule *AutoSyncRule, app, profileName, version string, c
 			Behavior:         rule.Behavior,
 			Overrides:        rule.Overrides,
 			Description:      rule.Description,
+
+			QualitySizeSource:    rule.QualitySizeSource,
+			QualitySizeOverrides: rule.QualitySizeOverrides,
 		},
 	}
 

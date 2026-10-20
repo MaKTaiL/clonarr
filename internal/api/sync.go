@@ -78,6 +78,9 @@ func (s *Server) handleDryRun(w http.ResponseWriter, r *http.Request) {
 	}
 	customCFs := s.Core.CustomCFs.List(inst.Type)
 	lastSyncedCFs := s.Core.GetLastSyncedCFs(req.InstanceID, req.ArrProfileID, req.Behavior)
+	// Quality size sets the user saved. Comes from config, never from the
+	// request body, so a client cannot hand us a set of its own.
+	req.UserQualitySizeSets = s.Core.Config.Get().QualitySizeSets
 	plan, err := core.BuildSyncPlan(ad, inst, req, imported, customCFs, lastSyncedCFs, s.Core.HTTPClient, nil)
 	if err != nil {
 		log.Printf("Dry-run error for %s: %v", inst.Name, err)
@@ -179,6 +182,7 @@ func (s *Server) handleApply(w http.ResponseWriter, r *http.Request) {
 	customCFs := s.Core.CustomCFs.List(inst.Type)
 	lastSyncedCFs := s.Core.GetLastSyncedCFs(req.InstanceID, req.ArrProfileID, req.Behavior)
 	behavior := core.ResolveSyncBehavior(req.Behavior)
+	req.UserQualitySizeSets = s.Core.Config.Get().QualitySizeSets
 	plan, err := core.BuildSyncPlan(ad, inst, req, imported, customCFs, lastSyncedCFs, s.Core.HTTPClient, op)
 	if err != nil {
 		log.Printf("Apply plan error for %s: %v", inst.Name, err)
@@ -412,6 +416,9 @@ func (s *Server) handleApply(w http.ResponseWriter, r *http.Request) {
 		QualityStructure:  req.QualityStructure,
 		Overrides:         req.Overrides,
 		Behavior:          req.Behavior,
+
+		QualitySizeSource:    req.QualitySizeSource,
+		QualitySizeOverrides: req.QualitySizeOverrides,
 		KeepArrCFIDs:      req.KeepArrCFIDs,
 		CFsCreated:        result.CFsCreated,
 		CFsUpdated:        result.CFsUpdated,
@@ -526,6 +533,8 @@ func (s *Server) handleApply(w http.ResponseWriter, r *http.Request) {
 				cfg.AutoSync.Rules[i].QualityStructure = req.QualityStructure
 				cfg.AutoSync.Rules[i].Behavior = req.Behavior
 				cfg.AutoSync.Rules[i].Overrides = req.Overrides
+				cfg.AutoSync.Rules[i].QualitySizeSource = req.QualitySizeSource
+				cfg.AutoSync.Rules[i].QualitySizeOverrides = req.QualitySizeOverrides
 				// Editor state, not sync input. Only callers that actually
 				// own the toggle send it; everyone else leaves it as it was.
 				if req.CustomizeEnabled != nil {
@@ -651,6 +660,8 @@ func (s *Server) handleApply(w http.ResponseWriter, r *http.Request) {
 			Behavior:             req.Behavior,
 			Overrides:            req.Overrides,
 			CustomizeEnabled:     req.CustomizeEnabled,
+			QualitySizeSource:    req.QualitySizeSource,
+			QualitySizeOverrides: req.QualitySizeOverrides,
 			LastSyncTime:         nowSync,
 			UpdatedAt:            nowSync,
 			LastSyncCommit:       currentCommit,

@@ -645,6 +645,7 @@ func (s *Server) handleRestoreAutoSyncRule(w http.ResponseWriter, r *http.Reques
 	endResult := "error: unknown"
 	defer func() { op.End(endResult) }()
 
+	syncReq.UserQualitySizeSets = s.Core.Config.Get().QualitySizeSets
 	plan, err := core.BuildSyncPlan(ad, inst, syncReq, imported, customCFs, nil, s.Core.HTTPClient, op)
 	if err != nil {
 		endResult = fmt.Sprintf("error: plan failed: %v", err)
