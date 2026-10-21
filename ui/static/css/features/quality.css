@@ -157,3 +157,36 @@
      which sit inside this cell and must stay readable. */
   .pqs-name { width: 230px; flex-shrink: 0; font-size: 13px; font-weight: 500; }
   .pqs-head .pqs-name { font-weight: 400; }
+  /* The three numbers mean nothing unlabelled, so each value column names
+     them under its own heading. */
+  .pqs-sub {
+    font-size: 10px;
+    font-weight: 400;
+    letter-spacing: 0.02em;
+    color: var(--text-muted);
+    opacity: 0.75;
+    margin-top: 1px;
+  }
+  /* The Custom inputs are part of the row above, not a thing of their own.
+     Without the rule and the inset they read as a stray line under the
+     table. */
+  .pqs-edit {
+    display: flex;
+    gap: 10px;
+    align-items: center;
+    flex-wrap: wrap;
+    margin: 0 0 8px 12px;
+    padding: 7px 12px;
+    border-left: 2px solid var(--accent-blue-muted);
+    background: var(--bg-muted);
+    border-radius: 0 4px 4px 0;
+  }
+  .pqs-edit-field {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    font-size: 12px;
+    color: var(--text-muted);
+  }
+  .pqs-edit-field input { width: 84px; padding: 3px 6px; font-size: 12px; }
+  .pqs-edit-unit { font-size: 11px; color: var(--text-muted); }

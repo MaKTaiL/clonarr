@@ -1911,10 +1911,17 @@
             <div class="card" style="padding:10px 14px">
               <div class="pqs-row pqs-head">
                 <div class="pqs-name">Quality</div>
-                <div style="width:150px;flex-shrink:0" x-tt="'Min / preferred / max, as the instance has it now.'">On the instance</div>
-                <div style="width:150px;flex-shrink:0" x-tt="'What Clonarr writes on the next sync.'">Will be written</div>
+                <!-- The three numbers are unreadable without saying which is
+                     which, and a tooltip is not a label. Named once per
+                     column rather than on every row. -->
+                <div style="width:150px;flex-shrink:0" x-tt="'What this quality is set to on the instance right now.'">On the instance
+                  <div class="pqs-sub">min / pref / max</div>
+                </div>
+                <div style="width:150px;flex-shrink:0" x-tt="'What Clonarr writes on the next sync.'">Will be written
+                  <div class="pqs-sub">min / pref / max</div>
+                </div>
                 <div style="flex:1;min-width:120px">Source</div>
-                <div style="width:104px;flex-shrink:0;text-align:center" x-tt="'Auto follows the chosen set. Custom uses your own numbers for this one quality.'">Mode</div>
+                <div style="width:104px;flex-shrink:0;text-align:center" x-tt="'From set takes this quality\'s numbers from the set chosen above. Custom uses your own numbers for this one quality.'">Mode</div>
               </div>
 
               <template x-for="row in pdQSVisibleRows()" :key="row.quality">
@@ -1935,7 +1942,7 @@
                     <div style="width:104px;flex-shrink:0;display:flex;justify-content:center">
                       <div class="qs-mode-seg">
                         <button class="qs-mode-seg-btn" :class="{ 'is-active': !pdQSIsCustom(row.quality) }"
-                                @click="if (pdQSIsCustom(row.quality)) pdQSToggleCustom(row)">Auto</button>
+                                @click="if (pdQSIsCustom(row.quality)) pdQSToggleCustom(row)">From set</button>
                         <button class="qs-mode-seg-btn" :class="{ 'is-active': pdQSIsCustom(row.quality) }"
                                 @click="if (!pdQSIsCustom(row.quality)) pdQSToggleCustom(row)">Custom</button>
                       </div>
@@ -1944,17 +1951,16 @@
                   <!-- The three inputs only appear in Custom, so an
                        untouched list stays a list rather than a form. -->
                   <template x-if="pdQSIsCustom(row.quality)">
-                    <div style="display:flex;gap:10px;align-items:center;padding:2px 0 8px 12px">
+                    <div class="pqs-edit">
                       <template x-for="f in ['min','preferred','max']" :key="f">
-                        <label style="display:flex;align-items:center;gap:5px;font-size:12px;color:var(--text-muted)">
-                          <span x-text="f.charAt(0).toUpperCase() + f.slice(1)"></span>
+                        <label class="pqs-edit-field">
+                          <span x-text="f === 'preferred' ? 'Preferred' : f.charAt(0).toUpperCase() + f.slice(1)"></span>
                           <input type="number" step="0.1" min="0"
-                                 style="width:84px;padding:3px 6px;font-size:12px"
                                  :value="pdQSOverrideVal(row.quality, f)"
                                  @change="pdQSSetOverrideVal(row.quality, f, $event.target.value)">
                         </label>
                       </template>
-                      <span style="font-size:11px;color:var(--text-muted)">MB per minute (Sonarr) or MB (Radarr), the same units the app shows</span>
+                      <span class="pqs-edit-unit" x-text="pdQSAppType() === 'radarr' ? 'MB' : 'MB per minute'"></span>
                     </div>
                   </template>
                 </div>
