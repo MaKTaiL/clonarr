@@ -32,6 +32,12 @@ type SyncRuleExport struct {
 	// TRaSH CFs are NOT bundled, they are referenced by trash_id in the rule
 	// and resolved from the target's TRaSH data.
 	CustomFormats []CustomCF `json:"customFormats,omitempty"`
+	// QualitySizeSets bundles the user's own size set when the rule points at
+	// one, for the same reason the custom CFs are bundled: it is defined on
+	// this machine and nowhere else, so a reference alone would resolve to
+	// nothing on the target and the rule would quietly write no sizes. Guide
+	// sets are referenced by trash_id instead and resolved on the target.
+	QualitySizeSets []QualitySizeSet `json:"qualitySizeSets,omitempty"`
 }
 
 // ExportBaseProfile identifies the profile the rule is built on.
@@ -67,7 +73,7 @@ type ExportedRule struct {
 // the source machine's custom CF registry keyed by ID; profileName is resolved
 // by the caller from the TRaSH snapshot; version is the running clonarr version.
 // Only custom CFs the rule actually references are bundled.
-func BuildSyncRuleExport(rule *AutoSyncRule, app, profileName, version string, customCFByID map[string]CustomCF) SyncRuleExport {
+func BuildSyncRuleExport(rule *AutoSyncRule, app, profileName, version string, customCFByID map[string]CustomCF, qualitySizeSets []QualitySizeSet) SyncRuleExport {
 	out := SyncRuleExport{
 		ClonarrExport: SyncRuleExportMarker,
 		SchemaVersion: SyncRuleExportSchema,
@@ -117,6 +123,22 @@ func BuildSyncRuleExport(rule *AutoSyncRule, app, profileName, version string, c
 	}
 	for id := range rule.ScoreOverrides {
 		bundle(id)
+	}
+
+	// The user's own size set, when the rule points at one. The id is local to
+	// this install, so the target matches it by name or creates it and rewrites
+	// the reference, exactly as it does for a bundled custom format.
+	if strings.HasPrefix(rule.QualitySizeSource, QSSourceCustomPfx) {
+		wantID := strings.TrimPrefix(rule.QualitySizeSource, QSSourceCustomPfx)
+		for _, set := range qualitySizeSets {
+			if set.ID != wantID {
+				continue
+			}
+			cp := set
+			cp.Qualities = append([]QualitySizeEntry(nil), set.Qualities...)
+			out.QualitySizeSets = append(out.QualitySizeSets, cp)
+			break
+		}
 	}
 	return out
 }

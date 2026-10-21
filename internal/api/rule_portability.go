@@ -70,7 +70,7 @@ func (s *Server) handleExportRule(w http.ResponseWriter, r *http.Request) {
 		customByID[cf.ID] = cf
 	}
 
-	export := core.BuildSyncRuleExport(rule, inst.Type, profileName, s.Core.Version, customByID)
+	export := core.BuildSyncRuleExport(rule, inst.Type, profileName, s.Core.Version, customByID, s.Core.Config.Get().QualitySizeSets)
 	writeJSON(w, export)
 }
 
@@ -232,5 +232,64 @@ func (s *Server) handleImportRule(w http.ResponseWriter, r *http.Request) {
 	}
 	core.RemapRuleCustomRefs(&exp.Rule, remap)
 
+	// The bundled size set, same treatment as a bundled custom format: match
+	// an existing one by name so importing twice does not pile up copies,
+	// otherwise store it, then point the rule at the local id. Without this
+	// the rule arrives pointing at an id from the other install, which
+	// resolves to nothing and writes no sizes while looking like a choice the
+	// importer made.
+	if newSource, err := s.importQualitySizeSets(exp); err != nil {
+		writeError(w, 500, "Failed to import the quality size set: "+err.Error())
+		return
+	} else if newSource != "" {
+		exp.Rule.QualitySizeSource = newSource
+	}
+
 	writeJSON(w, map[string]any{"export": exp, "baseProfileFound": true})
+}
+
+// importQualitySizeSets stores the export's bundled size set, reusing a local
+// set with the same name, and returns the source string the rule should carry.
+// Returns "" when there is nothing to do.
+func (s *Server) importQualitySizeSets(exp *core.SyncRuleExport) (string, error) {
+	if len(exp.QualitySizeSets) == 0 || !strings.HasPrefix(exp.Rule.QualitySizeSource, core.QSSourceCustomPfx) {
+		return "", nil
+	}
+	wantID := strings.TrimPrefix(exp.Rule.QualitySizeSource, core.QSSourceCustomPfx)
+	var bundled *core.QualitySizeSet
+	for i := range exp.QualitySizeSets {
+		if exp.QualitySizeSets[i].ID == wantID {
+			bundled = &exp.QualitySizeSets[i]
+			break
+		}
+	}
+	if bundled == nil {
+		return "", nil
+	}
+	name := strings.TrimSpace(bundled.Name)
+	if name == "" || len(bundled.Qualities) == 0 {
+		return "", nil
+	}
+
+	// Reuse by name. Two installs that both have "My sizes" mean the same
+	// thing to the person moving the rule, and silently creating a second one
+	// would leave them picking between identical entries.
+	for _, local := range s.Core.Config.Get().QualitySizeSets {
+		if local.AppType == exp.App && strings.EqualFold(local.Name, name) {
+			return core.QSSourceCustomPfx + local.ID, nil
+		}
+	}
+
+	stored := core.QualitySizeSet{
+		ID:        core.GenerateID(),
+		Name:      name,
+		AppType:   exp.App,
+		Qualities: append([]core.QualitySizeEntry(nil), bundled.Qualities...),
+	}
+	if err := s.Core.Config.Update(func(cfg *core.Config) {
+		cfg.QualitySizeSets = append(cfg.QualitySizeSets, stored)
+	}); err != nil {
+		return "", err
+	}
+	return core.QSSourceCustomPfx + stored.ID, nil
 }
