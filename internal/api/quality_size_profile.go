@@ -523,6 +523,33 @@ func (s *Server) handleSaveQualitySizeSet(w http.ResponseWriter, r *http.Request
 	writeJSON(w, set)
 }
 
+// qsSetTitle gives a guide set type a display name, matching what the profile
+// editor's picker shows. Mirrors pdQSSetTitle in the frontend.
+func qsSetTitle(setType string) string {
+	switch setType {
+	case "sqp-streaming":
+		return "SQP Streaming"
+	case "sqp-uhd":
+		return "SQP UHD"
+	}
+	if setType == "" {
+		return ""
+	}
+	return strings.ToUpper(setType[:1]) + setType[1:]
+}
+
+// qsGuideSetByType finds a guide size set by its type. core resolves sources
+// by trash_id; this is the one place that needs the lookup the other way, to
+// name and resolve the app's default set for a profile with no rule.
+func qsGuideSetByType(sets []*core.TrashQualitySize, setType string) *core.TrashQualitySize {
+	for _, set := range sets {
+		if set != nil && strings.EqualFold(set.Type, setType) {
+			return set
+		}
+	}
+	return nil
+}
+
 // qsSetUsedBy names the instances whose rules point at this user set. A set a
 // rule points at cannot be deleted out from under it: the rule would resolve
 // to nothing and quietly stop writing sizes.

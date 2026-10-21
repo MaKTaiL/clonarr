@@ -2938,6 +2938,42 @@ func floatPtrEqual(a, b *float64) bool {
 	return math.Abs(*a-*b) < 0.05
 }
 
+// QualitySizeDiffRow is one quality's current and wanted sizes, already
+// formatted. Exported for the Compare view, which lives outside this package
+// and must not reimplement the comparison: a second copy of "a nil wanted
+// field means leave it alone" would let Compare and the sync disagree about
+// what is in sync.
+type QualitySizeDiffRow struct {
+	Quality string `json:"quality"`
+	Current string `json:"current"`
+	Desired string `json:"desired"`
+	Match   bool   `json:"match"`
+}
+
+// DiffProfileQualitySizes compares a profile's own sizes against what would be
+// written, and reports every quality the profile has, matching or not, so the
+// caller can show the whole picture rather than only the differences.
+func DiffProfileQualitySizes(items []arr.ArrQualityItem, want map[string]QualitySizeTriple) []QualitySizeDiffRow {
+	current := collectQualitySizes(items)
+	names := make([]string, 0, len(current))
+	for name := range current {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	out := make([]QualitySizeDiffRow, 0, len(names))
+	for _, name := range names {
+		cur := current[name]
+		desired := effectiveSizeTriple(cur, want[name])
+		out = append(out, QualitySizeDiffRow{
+			Quality: name,
+			Current: formatSizeTriple(cur),
+			Desired: formatSizeTriple(desired),
+			Match:   sizeTripleEqual(cur, desired),
+		})
+	}
+	return out
+}
+
 func formatSizeTriple(t QualitySizeTriple) string {
 	f := func(v *float64) string {
 		if v == nil {

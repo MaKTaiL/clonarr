@@ -1816,7 +1816,15 @@ type ProfileComparison struct {
 	// Profile settings and quality comparison
 	SettingsDiffs []SettingDiff     `json:"settingsDiffs,omitempty"`
 	QualityDiffs  []QualityItemDiff `json:"qualityDiffs,omitempty"`
-	QualityStructure *CompareQualityStructure `json:"qualityStructure,omitempty"`
+	// Only on the versions that keep sizes on the quality profile. Sizes are
+	// part of the profile there, so "does this profile match the guide" cannot
+	// be answered without them.
+	QualitySizeDiffs []core.QualitySizeDiffRow `json:"qualitySizeDiffs,omitempty"`
+	// Which set the Guide column came from, and whether this rule applies it.
+	// Named rather than implied: the numbers are meaningless without knowing
+	// whether they are the rule's own choice or the guide's default.
+	QualitySizeSource string                   `json:"qualitySizeSource,omitempty"`
+	QualityStructure  *CompareQualityStructure `json:"qualityStructure,omitempty"`
 	// LEGACY (keep for now)
 	OptionalCategories []CompareCategory `json:"optionalCategories"` // optional CF groups categorized
 	Summary            ComparisonSummary `json:"summary"`
@@ -1831,6 +1839,9 @@ type ComparisonSummary struct {
 	Extra         int `json:"extra"`         // CFs in Arr profile not in TRaSH profile
 	SettingsDiffs int `json:"settingsDiffs"` // profile settings that differ
 	QualityDiffs  int `json:"qualityDiffs"`  // quality items that differ
+	// QualitySizeDiffs counts qualities whose min, preferred or max differs
+	// from what would be written.
+	QualitySizeDiffs int `json:"qualitySizeDiffs"`
 }
 
 type CompareQualityStructureMember struct {
@@ -1958,7 +1969,14 @@ type OptionalCFState struct {
 // scoreOverrides (trash_id → score) carry the user's desired-score-per-CF from a prior Clonarr
 // sync. When a CF has an override, the Compare uses that value as the desired score instead of
 // TRaSH's default — so CFs deliberately set to 0 (or any custom score) don't show as "wrong".
-func buildProfileComparison(inst core.Instance, ad *core.AppData, trashProfileID string, arrProfileID int, syncedCFs []string, scoreOverrides map[string]int, httpClient *http.Client) *ProfileComparison {
+// compareSizeIntent carries what the Guide column should say about sizes.
+// Resolved by the caller, which is the only place that can see the rules.
+type compareSizeIntent struct {
+	Want  map[string]core.QualitySizeTriple
+	Label string
+}
+
+func buildProfileComparison(inst core.Instance, ad *core.AppData, trashProfileID string, arrProfileID int, syncedCFs []string, scoreOverrides map[string]int, httpClient *http.Client, sizes compareSizeIntent) *ProfileComparison {
 	comp := &ProfileComparison{
 		ArrProfileID:   arrProfileID,
 		TrashProfileID: trashProfileID,
@@ -2443,14 +2461,14 @@ func buildProfileComparison(inst core.Instance, ad *core.AppData, trashProfileID
 			// Quality item not found in Arr — skip
 			continue
 		}
-		
+
 		cGroup := arrGroup[strings.ToLower(name)]
 		dGroup := trashGroup[strings.ToLower(name)]
-		
+
 		allowedMatch := currentAllowed == desiredAllowed
 		groupMatch := cGroup == dGroup
 		match := allowedMatch && groupMatch
-		
+
 		comp.QualityDiffs = append(comp.QualityDiffs, QualityItemDiff{
 			Name:           name,
 			CurrentAllowed: currentAllowed,
@@ -2466,14 +2484,28 @@ func buildProfileComparison(inst core.Instance, ad *core.AppData, trashProfileID
 		}
 	}
 
+	// Quality sizes, only where they live on the profile. Asked of the data
+	// rather than of a version string, same as everywhere else: the versions
+	// that keep sizes here put all three fields on every quality, and the
+	// versions that do not have no such fields at all.
+	if arr.ProfileItemsCarrySizes(arrProfile.Items) {
+		comp.QualitySizeDiffs = core.DiffProfileQualitySizes(arrProfile.Items, sizes.Want)
+		comp.QualitySizeSource = sizes.Label
+		for _, row := range comp.QualitySizeDiffs {
+			if !row.Match {
+				comp.Summary.QualitySizeDiffs++
+			}
+		}
+	}
+
 	// Compare ordering structure by using the fingerprint method
 	filtered := core.FilterArrItemsToDesired(arrProfile.Items, trashProfile.Items)
 	faCur := core.FingerprintArrItems(filtered, false)
 	faCurRev := core.FingerprintArrItems(filtered, true)
 	ftTgt := core.FingerprintTrashItems(trashProfile.Items)
-	
+
 	hasDrift := faCur != ftTgt && faCurRev != ftTgt
-	
+
 	cItemMap := make(map[string]arr.ArrQualityItem)
 	var currentKeys []string
 	var disabledKeys []string
@@ -2514,7 +2546,7 @@ func buildProfileComparison(inst core.Instance, ad *core.AppData, trashProfileID
 			}
 		}
 	}
-	
+
 	guideExpectedEnabled := make(map[string]bool)
 	for _, it := range trashProfile.Items {
 		if it.Allowed && it.Name != "" {
@@ -2584,7 +2616,7 @@ func (s *Server) handleCompareProfile(w http.ResponseWriter, r *http.Request) {
 			break
 		}
 	}
-	comp := buildProfileComparison(inst, ad, trashProfileID, arrProfileID, lastSyncedCFs, lastScoreOverrides, s.Core.HTTPClient)
+	comp := buildProfileComparison(inst, ad, trashProfileID, arrProfileID, lastSyncedCFs, lastScoreOverrides, s.Core.HTTPClient, s.compareSizeIntentFor(inst, arrProfileID))
 
 	if comp.Error == "" {
 		s.Core.DebugLog.Logf(core.LogCompare, "%q vs %q on %s | %d matching, %d wrong, %d missing, %d extra",
@@ -2595,6 +2627,77 @@ func (s *Server) handleCompareProfile(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, comp)
+}
+
+// compareSizeIntentFor works out what the Compare view's Guide column should
+// say about sizes, and what to call it.
+//
+// A rule's own source wins, because that is what the next sync will write. A
+// rule set to Off still shows the app default, labelled as not applied: the
+// useful question there is what turning it on would change, and hiding the
+// numbers would answer nothing. With no rule at all the default is simply
+// what the guide suggests, which is also what adopting this profile as a rule
+// would start from.
+func (s *Server) compareSizeIntentFor(inst core.Instance, arrProfileID int) compareSizeIntent {
+	ad := s.Core.Trash.GetAppData(inst.Type)
+	var guideSets []*core.TrashQualitySize
+	if ad != nil {
+		guideSets = ad.QualitySizes
+	}
+	cfg := s.Core.Config.Get()
+
+	rule := s.findRuleFor(inst.ID, arrProfileID)
+	source := ""
+	if rule != nil {
+		source = rule.QualitySizeSource
+	}
+	label := ""
+	applied := source != "" && source != core.QSSourceOff
+	if !applied {
+		// Fall back to the app's default set for the Guide column.
+		if set := qsGuideSetByType(guideSets, core.DefaultQualitySizeSetType(inst.Type)); set != nil {
+			source = core.QSSourceSetPfx + set.TrashID
+			label = qsSetTitle(set.Type) + ", the guide's default"
+			if rule != nil {
+				label += " (this rule is set to Off, so it is not applied)"
+			} else {
+				label += " (no sync rule yet)"
+			}
+		}
+	} else {
+		label = s.qsSourceLabel(inst.Type, source)
+	}
+	if source == "" {
+		return compareSizeIntent{}
+	}
+
+	var overrides map[string]core.QSOverride
+	if applied && rule != nil {
+		overrides = rule.QualitySizeOverrides
+	}
+	return compareSizeIntent{
+		Want: core.ResolveQualitySizes(core.QualitySizeResolveInput{
+			Source:    source,
+			Overrides: overrides,
+			AppType:   inst.Type,
+			GuideSets: guideSets,
+			UserSets:  cfg.QualitySizeSets,
+		}),
+		Label: label,
+	}
+}
+
+// qsSourceLabel names a stored source string for display.
+func (s *Server) qsSourceLabel(appType, source string) string {
+	for _, set := range s.qsAvailableSets(appType) {
+		if set.Value == source {
+			if set.Origin == "user" {
+				return set.Name
+			}
+			return qsSetTitle(set.Name)
+		}
+	}
+	return "a set that no longer exists, so nothing is written"
 }
 
 // handleRemoveProfileCFs handles POST /api/instances/{id}/profile-cfs/remove
@@ -2961,15 +3064,19 @@ func BuildAlignment(cKeys, gKeys []string, isEnabledSection bool, guideExpectedE
 
 	globalCSet := make(map[string]bool)
 	globalGSet := make(map[string]bool)
-	for _, k := range cKeys { globalCSet[k] = true }
-	for _, k := range gKeys { globalGSet[k] = true }
+	for _, k := range cKeys {
+		globalCSet[k] = true
+	}
+	for _, k := range gKeys {
+		globalGSet[k] = true
+	}
 
 	localRows := make([]CompareQualityStructureRow, 0)
-	
+
 	makeRow := func(c, g string, match bool) CompareQualityStructureRow {
 		cMembers := make([]CompareQualityStructureMember, 0)
 		gMembers := make([]CompareQualityStructureMember, 0)
-		
+
 		if !isEnabledSection {
 			// In disabled section, neutral (match=true) unless Guide expected it to be enabled (match=false -> red)
 			if c != "" && guideExpectedEnabled[c] {
@@ -3006,7 +3113,7 @@ func BuildAlignment(cKeys, gKeys []string, isEnabledSection bool, guideExpectedE
 							}
 						}
 						cMembers = append(cMembers, CompareQualityStructureMember{
-							Name: subName,
+							Name:  subName,
 							Match: memMatch,
 						})
 					}
@@ -3021,7 +3128,7 @@ func BuildAlignment(cKeys, gKeys []string, isEnabledSection bool, guideExpectedE
 			if gIt, ok := gItemMap[g]; ok {
 				for _, sub := range gIt.Items {
 					gMembers = append(gMembers, CompareQualityStructureMember{
-						Name: sub,
+						Name:  sub,
 						Match: true,
 					})
 				}
@@ -3032,7 +3139,7 @@ func BuildAlignment(cKeys, gKeys []string, isEnabledSection bool, guideExpectedE
 			CurrentMembers: cMembers, GuideMembers: gMembers,
 		}
 	}
-	
+
 	processGap := func(cGap, gGap []string) {
 		var cPresent, gPresent []string
 		for _, k := range cGap {
@@ -3045,10 +3152,10 @@ func BuildAlignment(cKeys, gKeys []string, isEnabledSection bool, guideExpectedE
 				gPresent = append(gPresent, k)
 			}
 		}
-		
+
 		cIdx, gIdx := 0, 0
 		cPresIdx, gPresIdx := 0, 0
-		
+
 		for cIdx < len(cGap) || gIdx < len(gGap) {
 			if gIdx < len(gGap) && !globalCSet[gGap[gIdx]] {
 				localRows = append(localRows, makeRow("", gGap[gIdx], false))
@@ -3060,17 +3167,27 @@ func BuildAlignment(cKeys, gKeys []string, isEnabledSection bool, guideExpectedE
 				cIdx++
 				continue
 			}
-			
+
 			if cPresIdx < len(cPresent) || gPresIdx < len(gPresent) {
 				c := ""
 				g := ""
-				if cPresIdx < len(cPresent) { c = cPresent[cPresIdx]; cPresIdx++ }
-				if gPresIdx < len(gPresent) { g = gPresent[gPresIdx]; gPresIdx++ }
+				if cPresIdx < len(cPresent) {
+					c = cPresent[cPresIdx]
+					cPresIdx++
+				}
+				if gPresIdx < len(gPresent) {
+					g = gPresent[gPresIdx]
+					gPresIdx++
+				}
 				localRows = append(localRows, makeRow(c, g, c != "" && c == g))
 			}
-			
-			if cIdx < len(cGap) && globalGSet[cGap[cIdx]] { cIdx++ }
-			if gIdx < len(gGap) && globalCSet[gGap[gIdx]] { gIdx++ }
+
+			if cIdx < len(cGap) && globalGSet[cGap[cIdx]] {
+				cIdx++
+			}
+			if gIdx < len(gGap) && globalCSet[gGap[gIdx]] {
+				gIdx++
+			}
 		}
 	}
 
@@ -3082,6 +3199,6 @@ func BuildAlignment(cKeys, gKeys []string, isEnabledSection bool, guideExpectedE
 		lastGuide = mt[1] + 1
 	}
 	processGap(cKeys[lastCur:], gKeys[lastGuide:])
-	
+
 	return localRows
 }

@@ -5542,6 +5542,8 @@ export default {
       const extra = s.extra || 0;
       const settings = s.settingsDiffs || 0;
       const quality = s.qualityDiffs || 0;
+      // Only ever non-zero where the instance keeps sizes on the profile.
+      const qualitySize = s.qualitySizeDiffs || 0;
       // Walk both data sources (Required formatItems + Group CFs) and
       // tally per the helper-driven classification. Mirrors what the
       // filter renders so sub-nav counts and visible rows agree.
@@ -5589,9 +5591,9 @@ export default {
       // the previous semantics. Summary-bar code that wants the old
       // meaning needs updating, not this helper.
       return {
-        overview, optional, missing, wrong, extra, settings, quality, qualityOrder,
+        overview, optional, missing, wrong, extra, settings, quality, qualitySize, qualityOrder,
         allDiffs, allActive,
-        diffs: allDiffs + extra + settings + quality + qualityOrder, // legacy alias
+        diffs: allDiffs + extra + settings + quality + qualitySize + qualityOrder, // legacy alias
         all: overview + optional, // legacy alias (rough)
       };
     },
