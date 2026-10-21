@@ -197,8 +197,9 @@ func TestDeleteQualitySizeSetConvertsRulesToOwnValues(t *testing.T) {
 	if converted == nil || untouched == nil {
 		t.Fatal("rules missing after delete")
 	}
-	// "off" and not "", or no partial writer could tell it apart from a field
-	// that was never sent.
+	// No guide data in this fixture, so there is no default set to land on and
+	// the rule has to carry the lot. "off" and not "", or no partial writer
+	// could tell it apart from a field that was never sent.
 	if converted.QualitySizeSource != core.QSSourceOff {
 		t.Errorf("source = %q, want %q", converted.QualitySizeSource, core.QSSourceOff)
 	}
@@ -213,5 +214,58 @@ func TestDeleteQualitySizeSetConvertsRulesToOwnValues(t *testing.T) {
 	}
 	if untouched.QualitySizeSource != "guide:abc" || untouched.QualitySizeOverrides != nil {
 		t.Errorf("a rule on another source was touched: %+v", untouched)
+	}
+}
+
+// A deleted set should leave the rule on the app default plus only what
+// disagreed with it. Converting every quality instead overrode every row, so
+// the source picker had no visible effect and read as frozen.
+func TestQSSetDeletionIntentPrefersTheDefaultPlusDeviations(t *testing.T) {
+	def := &core.TrashQualitySize{
+		TrashID: "series-id",
+		Type:    "series",
+		Qualities: []core.QualitySizeEntry{
+			{Quality: "WEBDL-1080p", Min: 15, Preferred: 995, Max: 1000},
+			{Quality: "WEBRip-1080p", Min: 15, Preferred: 995, Max: 1000},
+		},
+	}
+	// Saved from the series set with one value changed.
+	deleted := []core.QualitySizeEntry{
+		{Quality: "WEBDL-1080p", Min: 7, Preferred: 40, Max: 60},
+		{Quality: "WEBRip-1080p", Min: 15, Preferred: 995, Max: 1000},
+	}
+	src, ovs := qsSetDeletionIntent(deleted, def)
+	if src != core.QSSourceSetPfx+"series-id" {
+		t.Errorf("source = %q, want the default set", src)
+	}
+	if len(ovs) != 1 {
+		t.Fatalf("overrides = %+v, want only the one that differs", ovs)
+	}
+	if ov := ovs["WEBDL-1080p"]; ov.Min != 7 || ov.Preferred != 40 || ov.Max != 60 {
+		t.Errorf("WEBDL-1080p = %+v, want 7/40/60", ov)
+	}
+}
+
+// Landing on the default set is only safe when the deleted set covered
+// everything the default covers. Otherwise the default starts writing sizes
+// for qualities this rule never wrote, and there is no way to say "leave this
+// one alone" on top of a set.
+func TestQSSetDeletionIntentWillNotIntroduceWrites(t *testing.T) {
+	def := &core.TrashQualitySize{
+		TrashID: "series-id",
+		Type:    "series",
+		Qualities: []core.QualitySizeEntry{
+			{Quality: "WEBDL-1080p", Min: 15, Preferred: 995, Max: 1000},
+			{Quality: "Bluray-1080p", Min: 50, Preferred: 995, Max: 1000},
+		},
+	}
+	// Covers one quality the default covers, but not Bluray-1080p.
+	deleted := []core.QualitySizeEntry{{Quality: "WEBDL-1080p", Min: 7, Preferred: 40, Max: 60}}
+	src, ovs := qsSetDeletionIntent(deleted, def)
+	if src != core.QSSourceOff {
+		t.Errorf("source = %q, want off: landing on the default would start writing Bluray-1080p", src)
+	}
+	if len(ovs) != 1 || ovs["WEBDL-1080p"].Min != 7 {
+		t.Errorf("overrides = %+v, want the deleted set's own value carried", ovs)
 	}
 }

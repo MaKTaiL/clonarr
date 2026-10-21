@@ -553,33 +553,44 @@ func (s *Server) handleDeleteQualitySizeSet(w http.ResponseWriter, r *http.Reque
 	// way of a decision that is theirs. This is the exact inverse of "Save as
 	// set", which folded per-quality values into a set in the first place.
 	converted := 0
+	landedOn := ""
 	if err := s.Core.Config.Update(func(cfg *core.Config) {
-		var entries []core.QualitySizeEntry
+		var deleted core.QualitySizeSet
 		for _, set := range cfg.QualitySizeSets {
 			if set.ID == id {
-				entries = set.Qualities
+				deleted = set
 				break
 			}
 		}
+		var def *core.TrashQualitySize
+		if ad := s.Core.Trash.GetAppData(deleted.AppType); ad != nil {
+			want := core.DefaultQualitySizeSetType(deleted.AppType)
+			for _, g := range ad.QualitySizes {
+				if g != nil && g.Type == want {
+					def = g
+					break
+				}
+			}
+		}
+		newSource, base := qsSetDeletionIntent(deleted.Qualities, def)
+		landedOn = newSource
+
 		src := core.QSSourceCustomPfx + id
 		for i := range cfg.AutoSync.Rules {
 			if cfg.AutoSync.Rules[i].QualitySizeSource != src {
 				continue
 			}
-			merged := make(map[string]core.QSOverride, len(entries)+len(cfg.AutoSync.Rules[i].QualitySizeOverrides))
-			for _, e := range entries {
-				merged[e.Quality] = core.QSOverride{Min: e.Min, Preferred: e.Preferred, Max: e.Max}
+			merged := make(map[string]core.QSOverride, len(base)+len(cfg.AutoSync.Rules[i].QualitySizeOverrides))
+			for name, ov := range base {
+				merged[name] = ov
 			}
 			// An explicit per-quality value already beat the set, so it still
-			// does. Order matters: the set goes in first and the rule's own
-			// values overwrite it.
+			// does. Order matters: the deviations go in first and the rule's
+			// own values overwrite them.
 			for name, ov := range cfg.AutoSync.Rules[i].QualitySizeOverrides {
 				merged[name] = ov
 			}
-			// The literal "off", never the empty string: an empty source is
-			// indistinguishable from "this field was not sent", which every
-			// partial rule writer relies on.
-			cfg.AutoSync.Rules[i].QualitySizeSource = core.QSSourceOff
+			cfg.AutoSync.Rules[i].QualitySizeSource = newSource
 			cfg.AutoSync.Rules[i].QualitySizeOverrides = merged
 			converted++
 		}
@@ -598,5 +609,48 @@ func (s *Server) handleDeleteQualitySizeSet(w http.ResponseWriter, r *http.Reque
 		"status":         "deleted",
 		"convertedRules": converted,
 		"usedBy":         usedBy,
+		"landedOn":       landedOn,
 	})
+}
+
+// qsSetDeletionIntent works out what a rule pointing at a deleted set becomes.
+// It returns the source to store and the per-quality values to carry, and it
+// must leave the rule writing exactly the numbers it wrote before: no quality
+// gains a size, and none loses one.
+//
+// Preferred answer is the app's default set plus only the qualities where the
+// deleted set disagreed with it. Converting every quality instead left the
+// rule with an override on all of them, which beat the set on every row, so
+// the source picker had no visible effect and read as frozen.
+//
+// That is only safe when the deleted set covered every quality the default
+// covers. Otherwise the default would start writing sizes for qualities this
+// rule never wrote, which is the silent change the whole feature avoids, and
+// there is no way to say "leave this one alone" on top of a set. In that case
+// the rule goes to off and carries the lot.
+func qsSetDeletionIntent(deleted []core.QualitySizeEntry, def *core.TrashQualitySize) (string, map[string]core.QSOverride) {
+	all := make(map[string]core.QSOverride, len(deleted))
+	for _, e := range deleted {
+		all[e.Quality] = core.QSOverride{Min: e.Min, Preferred: e.Preferred, Max: e.Max}
+	}
+	if def == nil || len(def.Qualities) == 0 {
+		return core.QSSourceOff, all
+	}
+	for _, d := range def.Qualities {
+		if _, ok := all[d.Quality]; !ok {
+			return core.QSSourceOff, all
+		}
+	}
+	defByName := make(map[string]core.QualitySizeEntry, len(def.Qualities))
+	for _, d := range def.Qualities {
+		defByName[d.Quality] = d
+	}
+	deviations := map[string]core.QSOverride{}
+	for name, ov := range all {
+		d, ok := defByName[name]
+		if !ok || d.Min != ov.Min || d.Preferred != ov.Preferred || d.Max != ov.Max {
+			deviations[name] = ov
+		}
+	}
+	return core.QSSourceSetPfx + def.TrashID, deviations
 }

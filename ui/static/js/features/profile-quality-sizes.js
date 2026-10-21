@@ -437,7 +437,7 @@ export default {
       // outcome it would not allow.
       const usedBy = set.usedBy || [];
       const message = usedBy.length > 0
-        ? `"${set.name}" is removed from the list. The sync rules using it, on ${usedBy.join(', ')}, keep these exact sizes as their own values, so nothing changes on any instance.`
+        ? `"${set.name}" is removed from the list. The sync rules using it, on ${usedBy.join(', ')}, keep writing these exact sizes, so nothing changes on any instance.`
         : `"${set.name}" is removed from the list for good. No sync rule is using it, so nothing changes on any instance.`;
       const ok = await new Promise(resolve => {
         this.confirmModal = {
@@ -461,22 +461,23 @@ export default {
         }
         this.pdQSSets = (this.pdQSSets || []).filter(x => x.value !== set.value);
         if (this.pdQSSource === set.value) {
-          // Mirror server-side: this rule keeps the same numbers as its own
-          // values. Resetting instead would have dropped them on screen while
-          // the saved rule still had them.
-          const next = {};
-          for (const e of set.entries || []) {
-            next[e.quality] = { min: e.min, preferred: e.preferred, max: e.max };
-          }
-          for (const [name, ov] of Object.entries(this.pdQSOverrides || {})) next[name] = ov;
-          this.pdQSSource = 'off';
-          this.pdQSOverrides = next;
-          this._pdQSTouched = true;
+          // Re-read what the server stored for this rule rather than working
+          // out the same conversion again here. Two copies of that rule would
+          // drift, and the editor would then show something the saved rule
+          // does not say.
+          this.pdQSSource = '';
+          this.pdQSOverrides = {};
+          this._pdQSTouched = false;
+          this.pdQSLoadedKey = null;
+          await this.pdQSLoad(true);
         }
         const kept = d.convertedRules || 0;
+        const landed = (d.landedOn || '').startsWith('guide:')
+          ? `now follow the ${this.pdQSSetTitle(this.pdQSDefaultSetType)} sizes, with any differing values kept as custom`
+          : 'kept the sizes as their own values';
         this.showToast(
           kept > 0
-            ? `Deleted "${set.name}". ${kept} sync rule${kept === 1 ? '' : 's'} kept the sizes as their own values.`
+            ? `Deleted "${set.name}". ${kept} sync rule${kept === 1 ? '' : 's'} ${landed}.`
             : `Deleted "${set.name}"`,
           'success');
       } catch (e) {
