@@ -5,3 +5,13 @@ run-dev.cmd
 .claude/
 .DS_Store
 ._*
+
+# Working notes that belong to the development monorepo, never to this
+# repository. Listed so one cannot be committed here by accident: the design
+# documents, session notes and orientation files live outside and are not
+# part of what ships.
+CLAUDE.md
+PROJECT.md
+between-sessions.md
+*-plan.md
+*-design.md
