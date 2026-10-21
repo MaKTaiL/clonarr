@@ -791,6 +791,17 @@ func driftDetailToPendingChange(d DriftDetail, when string) PendingChange {
 			AffectedID:   d.CFName, // CF name is the stable identifier for drift since trash_id may be unknown
 			AffectedName: d.CFName,
 		}
+	case "quality_size":
+		// Same change type as the other quality rows, so the badge and the
+		// modal need no new case. Reads expected then actual, like the group
+		// row below.
+		return PendingChange{
+			Source:       "drift",
+			DetectedAt:   when,
+			ChangeType:   "qs-modified",
+			AffectedID:   "quality_size:" + d.CFName,
+			AffectedName: fmt.Sprintf("%s size changed from %v to %v", d.CFName, d.Target, d.Current),
+		}
 	case "quality", "group", "quality_order":
 		name := d.CFName
 		if d.Field == "group" {
@@ -1045,6 +1056,41 @@ func diffArrProfile(current, target *arr.ArrQualityProfile, cfs []arr.ArrCF, rul
 		}
 		out = append(out, DriftDetail{Field: "quality", CFName: name, Current: false, Target: ta})
 	}
+	// Quality sizes, on the versions that keep them on the profile. The target
+	// was built with this rule's resolved sizes, where a nil field means "say
+	// nothing" and the sync leaves whatever the instance has, so
+	// effectiveSizeTriple decides, exactly as the apply path does. Comparing
+	// the raw values instead would report a clear for every quality the
+	// chosen set does not cover.
+	//
+	// Without this a size changed by hand in the Arr was never noticed at all.
+	// The sync plan does see it, but the pull only runs rules whose TRaSH
+	// commit moved, and this pass is the one that looks at the Arr side.
+	// Gated by the Arr-drift source like everything else here, because that
+	// is the only way in.
+	curSizes := collectQualitySizes(current.Items)
+	tgtSizes := collectQualitySizes(target.Items)
+	sizeNames := make([]string, 0, len(tgtSizes))
+	for name := range tgtSizes {
+		if _, ok := curSizes[name]; ok {
+			sizeNames = append(sizeNames, name)
+		}
+	}
+	sort.Strings(sizeNames)
+	for _, name := range sizeNames {
+		cur := curSizes[name]
+		want := effectiveSizeTriple(cur, tgtSizes[name])
+		if sizeTripleEqual(cur, want) {
+			continue
+		}
+		out = append(out, DriftDetail{
+			Field:   "quality_size",
+			CFName:  name,
+			Current: formatSizeTriple(cur),
+			Target:  formatSizeTriple(want),
+		})
+	}
+
 	faCur := FingerprintArrItems(current.Items, false)
 	faCurRev := FingerprintArrItems(current.Items, true)
 	faTgt := FingerprintArrItems(target.Items, false)
@@ -1241,6 +1287,7 @@ func flattenAllowed(items []arr.ArrQualityItem) map[string]bool {
 func summariseDrift(details []DriftDetail) []string {
 	scoreCount := 0
 	qualityCount := 0
+	sizeCount := 0
 	settingsCount := 0
 	for _, d := range details {
 		switch d.Field {
@@ -1248,6 +1295,8 @@ func summariseDrift(details []DriftDetail) []string {
 			scoreCount++
 		case "quality", "group", "quality_order":
 			qualityCount++
+		case "quality_size":
+			sizeCount++
 		default:
 			settingsCount++
 		}
@@ -1261,18 +1310,25 @@ func summariseDrift(details []DriftDetail) []string {
 		out = append(out, fmt.Sprintf("%d %s from target", scoreCount, noun))
 	}
 	if settingsCount > 0 {
-		noun := "profile setting"
+		noun := "profile setting differs"
 		if settingsCount != 1 {
-			noun = "profile settings"
+			noun = "profile settings differ"
 		}
-		out = append(out, fmt.Sprintf("%d %s differ", settingsCount, noun))
+		out = append(out, fmt.Sprintf("%d %s", settingsCount, noun))
 	}
 	if qualityCount > 0 {
-		noun := "quality item"
+		noun := "quality item differs"
 		if qualityCount != 1 {
-			noun = "quality items"
+			noun = "quality items differ"
 		}
-		out = append(out, fmt.Sprintf("%d %s differ", qualityCount, noun))
+		out = append(out, fmt.Sprintf("%d %s", qualityCount, noun))
+	}
+	if sizeCount > 0 {
+		noun := "quality size differs"
+		if sizeCount != 1 {
+			noun = "quality sizes differ"
+		}
+		out = append(out, fmt.Sprintf("%d %s", sizeCount, noun))
 	}
 	return out
 }
