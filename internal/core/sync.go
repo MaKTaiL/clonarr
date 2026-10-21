@@ -878,6 +878,19 @@ func BuildSyncPlan(ad *AppData, instance Instance, req SyncRequest, imported *Im
 							plan.QualityPreview = append(plan.QualityPreview, "Ordering changed (will be restored to profile configuration)")
 						}
 					}
+					// On the versions that keep sizes on the profile, a size is
+					// a change to the profile like any other, so the preview
+					// has to name it. Same two helpers the apply path uses, on
+					// the same resolved items, so a dry run cannot promise
+					// something different from what gets written.
+					//
+					// Placed after the ordering check on purpose: that one
+					// reads Summary.QualityChanged, and a size-only change
+					// must not make it claim the order moved.
+					if changes := diffQualitySizes(collectQualitySizes(targetProfile.Items), collectQualitySizes(newItems)); len(changes) > 0 {
+						plan.QualityPreview = append(plan.QualityPreview, changes...)
+						plan.Summary.QualityChanged = true
+					}
 				}
 			}
 			// Also handle legacy flat overrides when quality rebuild was skipped
