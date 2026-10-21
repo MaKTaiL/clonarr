@@ -211,7 +211,21 @@ export default {
     pdQSVisibleRows() {
       const rows = this.pdQSRows || [];
       if (this.pdQSShowAll) return rows;
-      return rows.filter(row => row.allowed || this.pdQSIsCustom(row.quality));
+      const allowed = rows.filter(row => row.allowed || this.pdQSIsCustom(row.quality));
+      if (allowed.length) return allowed;
+      // Nothing is marked allowed, which is exactly what the blank-profile
+      // template looks like: the app ships it with every quality off. A
+      // filter that removes every row is a dead end rather than a filter, and
+      // an empty table reads as "there is nothing to set here".
+      //
+      // Fall back to the qualities the chosen set covers, so picking Series
+      // or Anime brings its rows into view, and to everything when no set is
+      // chosen. On a profile that does exist this never runs, so the tight
+      // default view there is unchanged.
+      const covered = rows.filter(
+        row => this.pdQSEntryFor(row.quality) || this.pdQSIsCustom(row.quality)
+      );
+      return covered.length ? covered : rows;
     },
 
     pdQSHiddenCount() {
