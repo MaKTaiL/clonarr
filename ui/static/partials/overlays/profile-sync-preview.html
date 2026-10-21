@@ -1862,7 +1862,10 @@
                   <div class="result-detail" x-text="pdQSWarning"></div>
                 </div>
               </template>
-              <div style="display:flex;flex-wrap:wrap;gap:6px;align-items:center">
+              <!-- Nothing below this can be answered when we could not reach
+                   an instance of this type: the warning above is the whole
+                   content of the tab in that case. -->
+              <div x-show="pdQSPerProfile" style="display:flex;flex-wrap:wrap;gap:6px;align-items:center">
                 <button class="qs-type-btn"
                         :class="{ active: !pdQSSource || pdQSSource === 'off' }"
                         @click="pdQSSetSource('off')"
@@ -1913,7 +1916,7 @@
                  everything would show 22 rows of inputs to set 2. A size on
                  a quality the profile does not allow changes nothing,
                  because a disallowed quality is never downloaded. -->
-            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;gap:12px">
+            <div x-show="pdQSPerProfile" style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;gap:12px">
               <div style="font-size:12px;color:var(--text-muted)">
                 <span x-text="pdQSVisibleRows().length"></span> qualities shown
                 <template x-if="pdQSHiddenCount() > 0">
@@ -1930,7 +1933,7 @@
                       x-text="pdQSShowAll ? 'Show only this profile\'s' : 'Show all qualities'"></button>
             </div>
 
-            <div class="card" style="padding:10px 14px">
+            <div x-show="pdQSPerProfile" class="card" style="padding:10px 14px">
               <div class="pqs-row pqs-head">
                 <div class="pqs-name">Quality</div>
                 <!-- The three numbers are unreadable without saying which is
@@ -2000,7 +2003,7 @@
             <!-- Save the current table under a name so another profile can
                  use it. A one-time copy, not a link: editing the set later
                  does not reach back into this rule. -->
-            <div class="card" style="padding:12px 16px;margin-top:14px">
+            <div x-show="pdQSPerProfile" class="card" style="padding:12px 16px;margin-top:14px">
               <div style="font-size:13px;font-weight:600;color:var(--text-primary);margin-bottom:4px">Save these sizes as a set</div>
               <div style="font-size:12px;color:var(--text-muted);margin-bottom:8px">
                 Keeps the current numbers under a name you can pick for other profiles. This profile is pointed at the new set, and your per-quality values are folded into it.

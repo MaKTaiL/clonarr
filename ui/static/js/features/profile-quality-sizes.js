@@ -41,6 +41,10 @@ export default {
     // has not created yet.
     pdQSFromSchema: false,
     pdQSWarning: '',
+    // True when no instance of this type could be reached, so whether sizes
+    // live on the profile is unknown. The tab is shown saying that, because
+    // hiding it would claim there is nothing to set.
+    pdQSUnknown: false,
     // Set on the first edit in this tab. Until then the saved rule is the
     // truth; afterwards the editor's own state is, so a reload must not
     // overwrite an unsaved change.
@@ -108,6 +112,7 @@ export default {
         this.pdQSInstanceSwitched = !!d.instanceSwitched;
         this.pdQSFromSchema = !!d.fromSchema;
         this.pdQSWarning = d.warning || '';
+        this.pdQSUnknown = !!d.unknown;
         this.pdQSLoadedKey = key;
         // The rule on disk is the truth on open; the editor's own state takes
         // over from the first edit.
@@ -166,11 +171,12 @@ export default {
     },
 
     pdQSShowTab() {
-      return !!this.pdQSPerProfile;
+      return !!this.pdQSPerProfile || !!this.pdQSUnknown;
     },
 
     pdQSDropTab() {
       this.pdQSPerProfile = false;
+      this.pdQSUnknown = false;
       this.pdQSRows = [];
       if (this.spActiveTab === 'quality-size') this.spActiveTab = 'default';
     },

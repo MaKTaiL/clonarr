@@ -172,8 +172,15 @@ func (s *Server) handleProfileQualitySizes(w http.ResponseWriter, r *http.Reques
 		// Nothing to set here. Not an error: on Radarr and Sonarr 4 the sizes
 		// live in one shared list and the instance-wide tab is the right
 		// place, so the editor simply shows no Quality size tab.
+		//
+		// An instance we could not reach is a different answer. We do not
+		// know what it keeps, and hiding the tab would assert that there is
+		// nothing to set. In a mixed Sonarr 4 and 5 setup the editor is bound
+		// to the reachable one, so nothing else on the screen would hint that
+		// anything was down: the tab would simply be gone. Say so instead.
 		if lastErr != nil && len(candidates) > 0 {
 			resp["warning"] = "Could not reach " + candidates[0].Name + ": " + lastErr.Error()
+			resp["unknown"] = true
 		}
 		writeJSON(w, resp)
 		return
