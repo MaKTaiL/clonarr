@@ -209,7 +209,7 @@ func TestLiveV5WriteRoundTrip(t *testing.T) {
 	}
 
 	if err := client.UpdateProfile(original); err != nil {
-		t.Errorf("restore failed, sonarr-v5-test profile %d is left modified: %v", profileID, err)
+		t.Errorf("restore failed, profile %d is left modified on the target instance: %v", profileID, err)
 	} else {
 		t.Log("profile restored")
 	}

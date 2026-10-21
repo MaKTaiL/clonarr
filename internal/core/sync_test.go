@@ -474,7 +474,7 @@ func TestFriendlyProfileErr(t *testing.T) {
 // its own validator bug: writing a quality profile whose minFormatScore
 // exceeds the achievable score makes the validator take Max over an empty
 // sequence when the instance has no custom formats, and it throws. Captured
-// from sonarr-v5-test 5.0.0.2569 and run through the same 200-rune truncation
+// from a Sonarr 5.0.0.2569 instance and run through the same 200-rune truncation
 // the Arr client applies, which is why the JSON is cut mid-value and will not
 // parse. Sonarr 4 validates properly and answers with a FluentValidation
 // message instead, covered by the min-score case above.
