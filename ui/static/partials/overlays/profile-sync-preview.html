@@ -1886,11 +1886,26 @@
                       <button class="sp-basics-reset"
                               @click="pdQSDeleteSet(set)"
                               :aria-label="'Delete the set ' + set.name"
-                              x-tt="'Delete this saved set. Refused while a sync rule still points at it.'">&#10005;</button>
+                              x-tt="'Delete this saved set. Rules using it keep these sizes as their own values.'">&#10005;</button>
                     </template>
                   </span>
                 </template>
+                <!-- Without this there is no way back to following a set once
+                     every quality has its own value, which is exactly where
+                     deleting a set leaves a rule, and the picker then looks
+                     broken rather than overridden. -->
+                <template x-if="pdQSChangeCount() > 0">
+                  <button class="qs-mode-btn"
+                          @click="pdQSClearOverrides()"
+                          x-tt="'Drop your own values and go back to following the set chosen above.'"
+                          x-text="'Clear ' + pdQSChangeCount() + ' custom value' + (pdQSChangeCount() === 1 ? '' : 's')"></button>
+                </template>
               </div>
+              <template x-if="pdQSAllRowsCustom()">
+                <div class="result-banner info" style="margin-top:8px">
+                  <div class="result-detail">Every quality listed has its own value, so the set chosen above changes nothing. Clear the custom values to follow a set again.</div>
+                </div>
+              </template>
             </div>
 
             <!-- Row list. Defaults to the qualities this profile allows: a

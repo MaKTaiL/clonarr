@@ -397,6 +397,21 @@ export default {
       return Object.keys(this.pdQSOverrides || {}).length;
     },
 
+    // True when nothing on screen can follow the chosen set, because every
+    // row has its own value. Deleting a set leaves a rule exactly here, and
+    // without saying so the source picker reads as broken.
+    pdQSAllRowsCustom() {
+      const rows = this.pdQSVisibleRows();
+      return rows.length > 0 && rows.every(row => this.pdQSIsCustom(row.quality));
+    },
+
+    // Back to following the set, keeping the source. pdQSReset() clears the
+    // source as well, which is a different intent.
+    pdQSClearOverrides() {
+      this.pdQSOverrides = {};
+      this._pdQSTouched = true;
+    },
+
     // What the basics-strip row shows.
     pdQSSummary() {
       const n = this.pdQSChangeCount();
