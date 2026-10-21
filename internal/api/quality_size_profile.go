@@ -544,13 +544,45 @@ func (s *Server) qsSetUsedBy(id string) []string {
 
 func (s *Server) handleDeleteQualitySizeSet(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
+	usedBy := s.qsSetUsedBy(id)
 
-	if inUse := s.qsSetUsedBy(id); len(inUse) > 0 {
-		writeError(w, 409, "This set is still used by a sync rule on "+strings.Join(inUse, ", "))
-		return
-	}
-
+	// A rule pointing at this set keeps writing the same numbers, as its own
+	// per-quality values. Refusing the delete was the easy answer and the
+	// wrong one: the user asked for the set to go, and the alternative to
+	// converting is either breaking those rules silently or standing in the
+	// way of a decision that is theirs. This is the exact inverse of "Save as
+	// set", which folded per-quality values into a set in the first place.
+	converted := 0
 	if err := s.Core.Config.Update(func(cfg *core.Config) {
+		var entries []core.QualitySizeEntry
+		for _, set := range cfg.QualitySizeSets {
+			if set.ID == id {
+				entries = set.Qualities
+				break
+			}
+		}
+		src := core.QSSourceCustomPfx + id
+		for i := range cfg.AutoSync.Rules {
+			if cfg.AutoSync.Rules[i].QualitySizeSource != src {
+				continue
+			}
+			merged := make(map[string]core.QSOverride, len(entries)+len(cfg.AutoSync.Rules[i].QualitySizeOverrides))
+			for _, e := range entries {
+				merged[e.Quality] = core.QSOverride{Min: e.Min, Preferred: e.Preferred, Max: e.Max}
+			}
+			// An explicit per-quality value already beat the set, so it still
+			// does. Order matters: the set goes in first and the rule's own
+			// values overwrite it.
+			for name, ov := range cfg.AutoSync.Rules[i].QualitySizeOverrides {
+				merged[name] = ov
+			}
+			// The literal "off", never the empty string: an empty source is
+			// indistinguishable from "this field was not sent", which every
+			// partial rule writer relies on.
+			cfg.AutoSync.Rules[i].QualitySizeSource = core.QSSourceOff
+			cfg.AutoSync.Rules[i].QualitySizeOverrides = merged
+			converted++
+		}
 		out := make([]core.QualitySizeSet, 0, len(cfg.QualitySizeSets))
 		for _, set := range cfg.QualitySizeSets {
 			if set.ID != id {
@@ -562,5 +594,9 @@ func (s *Server) handleDeleteQualitySizeSet(w http.ResponseWriter, r *http.Reque
 		writeError(w, 500, "Failed to delete the set")
 		return
 	}
-	writeJSON(w, map[string]string{"status": "deleted"})
+	writeJSON(w, map[string]any{
+		"status":         "deleted",
+		"convertedRules": converted,
+		"usedBy":         usedBy,
+	})
 }

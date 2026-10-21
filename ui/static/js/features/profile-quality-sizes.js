@@ -417,21 +417,18 @@ export default {
 
     async pdQSDeleteSet(set) {
       if (!set || set.origin !== 'user' || !set.id) return;
-      // Answer before asking. The backend refuses to delete a set a rule
-      // points at, so confirming first meant describing what deleting would
-      // do and then refusing to do it.
+      // Say what will happen, then do that. The dialog used to describe
+      // deleting and the server then refused, so the warning described an
+      // outcome it would not allow.
       const usedBy = set.usedBy || [];
-      if (usedBy.length > 0) {
-        this.showToast(
-          `"${set.name}" is still used by a sync rule on ${usedBy.join(', ')}. Point those rules at something else first.`,
-          'error', 8000);
-        return;
-      }
+      const message = usedBy.length > 0
+        ? `"${set.name}" is removed from the list. The sync rules using it, on ${usedBy.join(', ')}, keep these exact sizes as their own values, so nothing changes on any instance.`
+        : `"${set.name}" is removed from the list for good. No sync rule is using it, so nothing changes on any instance.`;
       const ok = await new Promise(resolve => {
         this.confirmModal = {
           show: true,
           title: 'Delete this size set?',
-          message: `"${set.name}" is removed from the list for good. No sync rule is using it, so nothing changes on any instance.`,
+          message,
           confirmLabel: 'Delete',
           onConfirm: () => resolve(true),
           onCancel: () => resolve(false),
@@ -448,8 +445,25 @@ export default {
           return;
         }
         this.pdQSSets = (this.pdQSSets || []).filter(x => x.value !== set.value);
-        if (this.pdQSSource === set.value) this.pdQSReset();
-        this.showToast(`Deleted "${set.name}"`, 'success');
+        if (this.pdQSSource === set.value) {
+          // Mirror server-side: this rule keeps the same numbers as its own
+          // values. Resetting instead would have dropped them on screen while
+          // the saved rule still had them.
+          const next = {};
+          for (const e of set.entries || []) {
+            next[e.quality] = { min: e.min, preferred: e.preferred, max: e.max };
+          }
+          for (const [name, ov] of Object.entries(this.pdQSOverrides || {})) next[name] = ov;
+          this.pdQSSource = 'off';
+          this.pdQSOverrides = next;
+          this._pdQSTouched = true;
+        }
+        const kept = d.convertedRules || 0;
+        this.showToast(
+          kept > 0
+            ? `Deleted "${set.name}". ${kept} sync rule${kept === 1 ? '' : 's'} kept the sizes as their own values.`
+            : `Deleted "${set.name}"`,
+          'success');
       } catch (e) {
         console.error('pdQSDeleteSet:', e);
         this.showToast('Could not delete the set', 'error');

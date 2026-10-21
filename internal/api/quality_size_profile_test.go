@@ -1,6 +1,8 @@
 package api
 
 import (
+	"net/http"
+	"net/http/httptest"
 	"testing"
 
 	"clonarr/internal/arr"
@@ -89,7 +91,7 @@ func TestBuildQSProfileRowsTakesAllowedFromTheGuideProfile(t *testing.T) {
 		}},
 	}
 	rows := buildQSProfileRows(blank, nil, nil, map[string]bool{
-		"WEBDL-1080p": true,
+		"WEBDL-1080p":  true,
 		"WEBRip-1080p": true,
 	})
 	by := map[string]qsProfileRow{}
@@ -133,5 +135,83 @@ func TestGuideAllowedQualitiesExpandsGroups(t *testing.T) {
 	}
 	if guideAllowedQualities(nil, "web-1080p") != nil {
 		t.Error("no app data: want nil")
+	}
+}
+
+// Deleting a set a rule points at used to be refused. It now goes through and
+// the rule keeps writing the same numbers as its own per-quality values, which
+// is the inverse of what "Save as set" did. The rule must not be left pointing
+// at a set that no longer exists, because that resolves to nothing and would
+// quietly stop it writing sizes.
+func TestDeleteQualitySizeSetConvertsRulesToOwnValues(t *testing.T) {
+	cfg := core.DefaultConfig()
+	cfg.QualitySizeSets = []core.QualitySizeSet{{
+		ID:      "set-1",
+		Name:    "Min Test",
+		AppType: "sonarr",
+		Qualities: []core.QualitySizeEntry{
+			{Quality: "WEBDL-1080p", Min: 7, Preferred: 40, Max: 60},
+			{Quality: "WEBRip-1080p", Min: 15, Preferred: 995, Max: 1000},
+		},
+	}}
+	cfg.Instances = []core.Instance{{ID: "inst-1", Name: "Sonarr v5", Type: "sonarr", URL: "http://x", APIKey: "k"}}
+	cfg.AutoSync.Rules = []core.AutoSyncRule{
+		{
+			ID: "r-points-at-set", InstanceID: "inst-1", ArrProfileID: 4,
+			QualitySizeSource: "custom:set-1",
+			// An explicit value already beat the set, so it has to survive.
+			QualitySizeOverrides: map[string]core.QSOverride{
+				"WEBDL-1080p": {Min: 1, Preferred: 2, Max: 3},
+			},
+		},
+		{ID: "r-elsewhere", InstanceID: "inst-1", ArrProfileID: 5, QualitySizeSource: "guide:abc"},
+	}
+
+	s, _ := setupConfigScheduleServer(t, cfg)
+
+	if used := s.qsSetUsedBy("set-1"); len(used) != 1 || used[0] != "Sonarr v5" {
+		t.Fatalf("qsSetUsedBy = %v, want [Sonarr v5]", used)
+	}
+
+	req := httptest.NewRequest(http.MethodDelete, "/api/quality-size-sets/set-1", nil)
+	req.SetPathValue("id", "set-1")
+	rec := httptest.NewRecorder()
+	s.handleDeleteQualitySizeSet(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body %s", rec.Code, rec.Body.String())
+	}
+
+	got := s.Core.Config.Get()
+	if len(got.QualitySizeSets) != 0 {
+		t.Errorf("the set is still there: %+v", got.QualitySizeSets)
+	}
+	var converted, untouched *core.AutoSyncRule
+	for i := range got.AutoSync.Rules {
+		switch got.AutoSync.Rules[i].ID {
+		case "r-points-at-set":
+			converted = &got.AutoSync.Rules[i]
+		case "r-elsewhere":
+			untouched = &got.AutoSync.Rules[i]
+		}
+	}
+	if converted == nil || untouched == nil {
+		t.Fatal("rules missing after delete")
+	}
+	// "off" and not "", or no partial writer could tell it apart from a field
+	// that was never sent.
+	if converted.QualitySizeSource != core.QSSourceOff {
+		t.Errorf("source = %q, want %q", converted.QualitySizeSource, core.QSSourceOff)
+	}
+	if n := len(converted.QualitySizeOverrides); n != 2 {
+		t.Fatalf("overrides = %d, want 2: %+v", n, converted.QualitySizeOverrides)
+	}
+	if ov := converted.QualitySizeOverrides["WEBRip-1080p"]; ov.Min != 15 || ov.Preferred != 995 || ov.Max != 1000 {
+		t.Errorf("WEBRip-1080p = %+v, want the set's 15/995/1000", ov)
+	}
+	if ov := converted.QualitySizeOverrides["WEBDL-1080p"]; ov.Min != 1 || ov.Preferred != 2 || ov.Max != 3 {
+		t.Errorf("WEBDL-1080p = %+v, want the rule's own 1/2/3 to win over the set", ov)
+	}
+	if untouched.QualitySizeSource != "guide:abc" || untouched.QualitySizeOverrides != nil {
+		t.Errorf("a rule on another source was touched: %+v", untouched)
 	}
 }
