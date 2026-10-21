@@ -1861,7 +1861,7 @@
                 <div class="result-banner error" style="margin:0 0 10px">
                   <div class="result-detail" x-text="pdQSWarning"></div>
                   <template x-if="pdQSUnknown">
-                    <div class="result-detail">You can still choose a set below and save. It is written on the next sync once the instance answers again.</div>
+                    <div class="result-detail">You can still choose a set below and save. It is written on the next sync once the instance answers again. "On the instance" reads N/A because we cannot check what it holds right now.</div>
                   </template>
                 </div>
               </template>
@@ -1922,7 +1922,7 @@
                  everything would show 22 rows of inputs to set 2. A size on
                  a quality the profile does not allow changes nothing,
                  because a disallowed quality is never downloaded. -->
-            <div x-show="pdQSPerProfile" style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;gap:12px">
+            <div x-show="pdQSPerProfile || pdQSUnknown" style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;gap:12px">
               <div style="font-size:12px;color:var(--text-muted)">
                 <span x-text="pdQSVisibleRows().length"></span> qualities shown
                 <template x-if="pdQSHiddenCount() > 0">
@@ -1939,13 +1939,13 @@
                       x-text="pdQSShowAll ? 'Show only this profile\'s' : 'Show all qualities'"></button>
             </div>
 
-            <div x-show="pdQSPerProfile" class="card" style="padding:10px 14px">
+            <div x-show="pdQSPerProfile || pdQSUnknown" class="card" style="padding:10px 14px">
               <div class="pqs-row pqs-head">
                 <div class="pqs-name">Quality</div>
                 <!-- The three numbers are unreadable without saying which is
                      which, and a tooltip is not a label. Named once per
                      column rather than on every row. -->
-                <div style="width:150px;flex-shrink:0" x-tt="'What this quality is set to on the instance right now.'">On the instance
+                <div style="width:150px;flex-shrink:0" x-tt="pdQSUnknown ? 'Unknown: the instance did not answer, and the last sync\'s numbers cannot be checked for drift since.' : 'What this quality is set to on the instance right now.'">On the instance
                   <div class="pqs-sub">min / pref / max</div>
                 </div>
                 <div class="pqs-written" x-tt="'What Clonarr writes on the next sync, in ' + (pdQSAppType() === 'radarr' ? 'MB' : 'MB per minute') + ', the same units the app shows.'">Will be written

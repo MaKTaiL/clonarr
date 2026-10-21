@@ -291,8 +291,57 @@ export default {
       return names ? !!names.get(row.quality) : !!row.allowed;
     },
 
+    // Rows built without the instance, for when it could not be reached. The
+    // qualities and their order come from the profile the editor already has
+    // from the guide; the numbers come from the chosen set, which is also
+    // guide or config data. So the user can still see what will be written.
+    //
+    // "On the instance" is left empty on purpose and rendered as N/A. The last
+    // sync's values are the obvious thing to put there and the wrong one: we
+    // cannot check whether anything has drifted since, so showing them as
+    // current would state something we have not verified.
+    pdQSOfflineRows() {
+      const set = this.pdQSActiveSet();
+      const byName = new Map();
+      for (const e of (set?.entries || [])) byName.set(e.quality, e);
+      const order = [];
+      const seen = new Set();
+      const walk = (items) => {
+        for (const it of (items || [])) {
+          if (it.items && it.items.length > 0) {
+            const group = it.name || it.quality?.name || '';
+            for (const leaf of it.items) {
+              const name = typeof leaf === 'string' ? leaf : (leaf?.name || leaf?.quality?.name);
+              if (name && !seen.has(name)) { seen.add(name); order.push({ quality: name, group }); }
+            }
+            continue;
+          }
+          const name = it.name || it.quality?.name;
+          if (name && !seen.has(name)) { seen.add(name); order.push({ quality: name, group: '' }); }
+        }
+      };
+      walk(this.qualityStructure && this.qualityStructure.length > 0
+        ? this.qualityStructure
+        : this.profileDetail?.detail?.profile?.items);
+      // Anything the set or an override names that the profile does not list.
+      for (const name of [...byName.keys(), ...Object.keys(this.pdQSOverrides || {})]) {
+        if (!seen.has(name)) { seen.add(name); order.push({ quality: name, group: '' }); }
+      }
+      // Stored lowest priority first, same as the profile; the table reads
+      // highest first, which is the order both Arr UIs show.
+      order.reverse();
+      return order.map(r => ({
+        quality: r.quality,
+        group: r.group,
+        allowed: true, // pdQSRowAllowed answers this from the editor's own state
+        current: {},
+      }));
+    },
+
     pdQSVisibleRows() {
-      const rows = this.pdQSRows || [];
+      const rows = (this.pdQSUnknown && (this.pdQSRows || []).length === 0)
+        ? this.pdQSOfflineRows()
+        : (this.pdQSRows || []);
       if (this.pdQSShowAll) return rows;
       const allowed = rows.filter(row => this.pdQSRowAllowed(row) || this.pdQSIsCustom(row.quality));
       if (allowed.length) return allowed;
@@ -329,6 +378,9 @@ export default {
     },
 
     pdQSCurrentText(row) {
+      // Not "unlimited", and not the last sync's numbers: with the instance
+      // unreachable we do not know what it holds now.
+      if (this.pdQSUnknown) return 'N/A';
       const parts = QS_FIELDS.map(f => {
         const v = row.current?.[f];
         // The app stores no value for Unlimited, and its own UI shows the
