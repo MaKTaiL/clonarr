@@ -373,6 +373,10 @@ type qsSetOption struct {
 	// the previous set's numbers under the new set's name. Six sets of at
 	// most 21 rows, so the payload cost is nothing.
 	Entries []core.QualitySizeEntry `json:"entries"`
+	// UsedBy names the instances whose rules point at this set, for user sets
+	// only. Reported so the picker can say a set cannot be deleted before
+	// asking the user to confirm deleting it.
+	UsedBy []string `json:"usedBy,omitempty"`
 }
 
 func (s *Server) qsAvailableSets(appType string) []qsSetOption {
@@ -413,6 +417,7 @@ func (s *Server) qsAvailableSets(appType string) []qsSetOption {
 			Origin:  "user",
 			ID:      set.ID,
 			Entries: set.Qualities,
+			UsedBy:  s.qsSetUsedBy(set.ID),
 		})
 	}
 	return out
@@ -511,24 +516,36 @@ func (s *Server) handleSaveQualitySizeSet(w http.ResponseWriter, r *http.Request
 	writeJSON(w, set)
 }
 
+// qsSetUsedBy names the instances whose rules point at this user set. A set a
+// rule points at cannot be deleted out from under it: the rule would resolve
+// to nothing and quietly stop writing sizes.
+//
+// Also reported on every set in the listing, so the picker can say a set is in
+// use before asking the user to confirm deleting it rather than after.
+func (s *Server) qsSetUsedBy(id string) []string {
+	out := []string{}
+	seen := map[string]bool{}
+	for _, rule := range s.Core.Config.Get().AutoSync.Rules {
+		if rule.QualitySizeSource != core.QSSourceCustomPfx+id {
+			continue
+		}
+		name := rule.ID
+		if inst, ok := s.Core.Config.GetInstance(rule.InstanceID); ok {
+			name = inst.Name
+		}
+		if seen[name] {
+			continue
+		}
+		seen[name] = true
+		out = append(out, name)
+	}
+	return out
+}
+
 func (s *Server) handleDeleteQualitySizeSet(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 
-	// A set a rule points at cannot be deleted out from under it: the rule
-	// would resolve to nothing and quietly stop writing sizes. Name the rules
-	// so the user can go and change them.
-	cfg := s.Core.Config.Get()
-	inUse := []string{}
-	for _, rule := range cfg.AutoSync.Rules {
-		if rule.QualitySizeSource == core.QSSourceCustomPfx+id {
-			name := rule.ID
-			if inst, ok := s.Core.Config.GetInstance(rule.InstanceID); ok {
-				name = inst.Name
-			}
-			inUse = append(inUse, name)
-		}
-	}
-	if len(inUse) > 0 {
+	if inUse := s.qsSetUsedBy(id); len(inUse) > 0 {
 		writeError(w, 409, "This set is still used by a sync rule on "+strings.Join(inUse, ", "))
 		return
 	}

@@ -417,11 +417,21 @@ export default {
 
     async pdQSDeleteSet(set) {
       if (!set || set.origin !== 'user' || !set.id) return;
+      // Answer before asking. The backend refuses to delete a set a rule
+      // points at, so confirming first meant describing what deleting would
+      // do and then refusing to do it.
+      const usedBy = set.usedBy || [];
+      if (usedBy.length > 0) {
+        this.showToast(
+          `"${set.name}" is still used by a sync rule on ${usedBy.join(', ')}. Point those rules at something else first.`,
+          'error', 8000);
+        return;
+      }
       const ok = await new Promise(resolve => {
         this.confirmModal = {
           show: true,
           title: 'Delete this size set?',
-          message: `"${set.name}" is removed from the list for every profile. Profiles already pointed at it keep the sizes they have until you choose something else.`,
+          message: `"${set.name}" is removed from the list for good. No sync rule is using it, so nothing changes on any instance.`,
           confirmLabel: 'Delete',
           onConfirm: () => resolve(true),
           onCancel: () => resolve(false),
