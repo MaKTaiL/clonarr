@@ -62,8 +62,8 @@ export default {
       // them, and synced again.
       const arrId = this.pdQSArrProfileId();
       const prefer = this.pdQSPreferredInstanceId();
-      const chosen = this.pdQSInstanceChosen();
-      const key = `${app}|${prefer}|${chosen}|${arrId}`;
+      const fixed = this.pdQSInstanceFixed();
+      const key = `${app}|${prefer}|${fixed}|${arrId}`;
       if (!force && this.pdQSLoadedKey === key) return;
       // The backend may have to read the definition list from more than one
       // instance plus a profile, so this is slow enough to lose a race with
@@ -73,16 +73,16 @@ export default {
       try {
         const q = new URLSearchParams({ app, arrProfileId: String(arrId) });
         if (prefer) q.set('instanceId', prefer);
-        // Lets the backend honour a target the user picked instead of
-        // resolving past it to an instance that does keep sizes per profile.
-        if (chosen) q.set('instanceChosen', '1');
+        // Lets the backend answer for this rule's own instance instead of
+        // resolving past it to one that does keep sizes per profile.
+        if (fixed) q.set('instanceFixed', '1');
         // Lets the backend mark which qualities this guide profile allows
         // while it does not exist on the instance yet.
         const trashId = this.profileDetail?.profile?.trashId;
         if (trashId) q.set('trashId', trashId);
         const r = await fetch(`/api/profile-quality-sizes?${q}`);
         const stillCurrent = () =>
-          `${this.pdQSAppType()}|${this.pdQSPreferredInstanceId()}|${this.pdQSInstanceChosen()}|${this.pdQSArrProfileId()}` === key;
+          `${this.pdQSAppType()}|${this.pdQSPreferredInstanceId()}|${this.pdQSInstanceFixed()}|${this.pdQSArrProfileId()}` === key;
         if (!stillCurrent()) return;
         if (!r.ok) {
           // An instance that is down, or a profile it no longer has. Say
@@ -150,15 +150,19 @@ export default {
     // answer for a different instance of the same app when that one keeps its
     // sizes in the shared list.
     pdQSPreferredInstanceId() {
-      if (this.pdQSInstanceChosen()) return this.syncForm.instanceId;
+      // A saved rule's own instance wins. Otherwise the sync step's pick,
+      // while that step is open, and the editor's binding before it.
+      if (this.pdQSInstanceFixed()) return this.profileDetail?.instance?.id || '';
+      if (this.showSyncModal && this.syncForm?.instanceId) return this.syncForm.instanceId;
       return this.profileDetail?.instance?.id || '';
     },
 
-    // Whether the instance is the user's pick. The sync step is where the
-    // target becomes real; the editor's own binding is only the first
-    // instance of that type in the config, which is nobody's decision.
-    pdQSInstanceChosen() {
-      return !!(this.showSyncModal && this.syncForm?.instanceId);
+    // Whether this editor is bound to an instance that is already decided,
+    // which means a saved rule. Picking a target in the sync step is not a
+    // decision yet: closing that step and syncing somewhere else must not
+    // have cost the user this tab in the meantime.
+    pdQSInstanceFixed() {
+      return !!this.profileDetail?._editLockedArrProfileId;
     },
 
     pdQSShowTab() {

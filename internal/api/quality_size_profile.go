@@ -118,10 +118,10 @@ func (s *Server) handleProfileQualitySizes(w http.ResponseWriter, r *http.Reques
 	// The guide profile being browsed, when there is one. Only used to mark
 	// which qualities it allows while no profile exists on the instance yet.
 	trashID := r.URL.Query().Get("trashId")
-	// True when the instance came from the sync step, where the user picks the
-	// target, rather than from the editor's own binding, which is just the
-	// first instance of that type in the config.
-	instanceChosen := r.URL.Query().Get("instanceChosen") == "1"
+	// True when the editor is bound to a saved rule, which belongs to one
+	// instance. Browsing a guide profile, or picking a target in the sync step
+	// without saving, decides nothing yet.
+	instanceFixed := r.URL.Query().Get("instanceFixed") == "1"
 
 	cfg := s.Core.Config.Get()
 	candidates := make([]core.Instance, 0, 2)
@@ -136,11 +136,13 @@ func (s *Server) handleProfileQualitySizes(w http.ResponseWriter, r *http.Reques
 		candidates = append(candidates, inst)
 	}
 
-	// A chosen target is the instance the sync will write to. If it keeps its
-	// sizes in the shared list there is nothing to set per profile, and
-	// answering for a different instance would offer a setting the target
-	// never reads. Only an unchosen preference may be resolved past.
-	if instanceChosen && preferred != "" && len(candidates) > 0 && candidates[0].ID == preferred {
+	// A saved rule writes to its own instance. If that one keeps its sizes in
+	// the shared list there is nothing to set per profile, and answering for a
+	// different instance would offer a setting this rule never writes. So a
+	// decided instance is answered for as-is, and only an undecided preference
+	// may be resolved past, which is what puts the tab in front of a Sonarr 5
+	// user whose Sonarr 4 happens to come first in the config.
+	if instanceFixed && preferred != "" && len(candidates) > 0 && candidates[0].ID == preferred {
 		candidates = candidates[:1]
 	}
 
