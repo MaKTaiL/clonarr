@@ -310,7 +310,9 @@ export default {
     // lever to pull: a value from the app default looks identical to one
     // chosen for this profile unless the tab says so.
     pdQSRowSource(row) {
-      if (this.pdQSIsCustom(row.quality)) return 'Your value';
+      // The word the user pressed, and a peer of the set names listed in the
+      // same column: Series, Anime, a saved set, or Custom.
+      if (this.pdQSIsCustom(row.quality)) return 'Custom';
       const set = this.pdQSActiveSet();
       if (!set) return 'Not written';
       if (!this.pdQSEntryFor(row.quality)) return 'Not in this set, left as is';
