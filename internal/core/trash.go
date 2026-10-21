@@ -107,15 +107,28 @@ type QualityItem struct {
 	// Per-profile quality sizes, for the versions that keep them on the
 	// profile rather than in one shared list (Sonarr v5 and later). Nil means
 	// "say nothing", which leaves whatever the instance already has in place.
-	// Nothing populates these yet: the guide has settled that profiles will
-	// carry a suggested size set the user can override, but not yet how that
-	// looks in its JSON, so the mapping is the only piece still missing.
-	// resolveQualityItems carries them to the Arr body, and UpdateProfile
-	// leaves an explicit value alone, so wiring the guide side is all that
-	// step needs.
+	// Nothing populates these yet: the guide points a profile at a whole size
+	// set by trash_id rather than carrying numbers itself, and no profile
+	// carries that reference so far. resolveQualityItems carries these to the
+	// Arr body for individual qualities, group members included, and
+	// UpdateProfile leaves an explicit value alone. Group rows get no size:
+	// the app keeps sizes on individual qualities only, so a size on a
+	// grouped entry belongs to its members. The editor deliberately does not
+	// round-trip these: the user's choice of size set is what gets stored,
+	// and the numbers are resolved at sync time, the same way scores are.
 	MinSize       *float64 `json:"minSize,omitempty"`
 	MaxSize       *float64 `json:"maxSize,omitempty"`
 	PreferredSize *float64 `json:"preferredSize,omitempty"`
+}
+
+// copyFloatPtr returns an independent copy of an optional float, so a deep
+// copy does not share the pointed-at value with the original.
+func copyFloatPtr(src *float64) *float64 {
+	if src == nil {
+		return nil
+	}
+	v := *src
+	return &v
 }
 
 // cloneQualityItems returns a deep copy of a slice of QualityItems.
@@ -127,7 +140,13 @@ func cloneQualityItems(src []QualityItem) []QualityItem {
 	}
 	out := make([]QualityItem, len(src))
 	for i, it := range src {
-		out[i] = QualityItem{Name: it.Name, Allowed: it.Allowed}
+		out[i] = QualityItem{
+			Name:          it.Name,
+			Allowed:       it.Allowed,
+			MinSize:       copyFloatPtr(it.MinSize),
+			MaxSize:       copyFloatPtr(it.MaxSize),
+			PreferredSize: copyFloatPtr(it.PreferredSize),
+		}
 		if len(it.Items) > 0 {
 			out[i].Items = make([]string, len(it.Items))
 			copy(out[i].Items, it.Items)

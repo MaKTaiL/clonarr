@@ -485,7 +485,7 @@
                         <template x-if="sh.changes">
                           <span class="v3-hist-changes"
                                 x-text="(() => { const c = sh.changes; const total = (c.cfDetails?.length || 0) + (c.scoreDetails?.length || 0) + (c.qualityDetails?.length || 0) + (c.settingsDetails?.length || 0); return total + (total === 1 ? ' change' : ' changes'); })()"
-                                x-tt="(() => { const c = sh.changes; const parts = []; if (c.cfDetails?.length) parts.push(c.cfDetails.length + ' CF' + (c.cfDetails.length !== 1 ? 's' : '')); if (c.scoreDetails?.length) parts.push(c.scoreDetails.length + ' score' + (c.scoreDetails.length !== 1 ? 's' : '')); if (c.qualityDetails?.length) parts.push(c.qualityDetails.length + ' quality'); if (c.settingsDetails?.length) parts.push(c.settingsDetails.length + ' setting' + (c.settingsDetails.length !== 1 ? 's' : '')); return parts.length ? parts.join(' · ') + '. Click row to expand timeline.' : 'No changes'; })()"></span>
+                                x-tt="(() => { const c = sh.changes; const parts = []; if (c.cfDetails?.length) parts.push(c.cfDetails.length + ' CF' + (c.cfDetails.length !== 1 ? 's' : '')); if (c.scoreDetails?.length) parts.push(c.scoreDetails.length + ' score' + (c.scoreDetails.length !== 1 ? 's' : '')); if (c.qualityDetails?.length) parts.push(c.qualityDetails.length + ' quality' + (c.qualityDetails.length !== 1 ? ' items' : ' item')); if (c.settingsDetails?.length) parts.push(c.settingsDetails.length + ' setting' + (c.settingsDetails.length !== 1 ? 's' : '')); return parts.length ? parts.join(' · ') + '. Click row to expand timeline.' : 'No changes'; })()"></span>
                         </template>
                         <span x-show="!sh.changes" class="v3-hist-empty">No changes</span>
                       </div>
@@ -532,7 +532,7 @@
                                         x-text="({trash_update:'TRaSH update',manual:'Manual',drift_apply:'Arr drift',delayed_apply:'Delayed apply',restore:'Restore',rollback:'Rollback'}[entry.triggerType] || entry.triggerType)"></span>
                                 </template>
                                 <span class="v3-hist-event-summary"
-                                      x-tt="(() => { const c = entry.changes; const parts = []; if (c.cfDetails?.length) parts.push(c.cfDetails.length + ' CF' + (c.cfDetails.length !== 1 ? 's' : '')); if (c.scoreDetails?.length) parts.push(c.scoreDetails.length + ' score' + (c.scoreDetails.length !== 1 ? 's' : '')); if (c.qualityDetails?.length) parts.push(c.qualityDetails.length + ' quality'); if (c.settingsDetails?.length) parts.push(c.settingsDetails.length + ' setting' + (c.settingsDetails.length !== 1 ? 's' : '')); return parts.length ? parts.join(' · ') + '. Click for details.' : 'No changes'; })()">
+                                      x-tt="(() => { const c = entry.changes; const parts = []; if (c.cfDetails?.length) parts.push(c.cfDetails.length + ' CF' + (c.cfDetails.length !== 1 ? 's' : '')); if (c.scoreDetails?.length) parts.push(c.scoreDetails.length + ' score' + (c.scoreDetails.length !== 1 ? 's' : '')); if (c.qualityDetails?.length) parts.push(c.qualityDetails.length + ' quality' + (c.qualityDetails.length !== 1 ? ' items' : ' item')); if (c.settingsDetails?.length) parts.push(c.settingsDetails.length + ' setting' + (c.settingsDetails.length !== 1 ? 's' : '')); return parts.length ? parts.join(' · ') + '. Click for details.' : 'No changes'; })()">
                                   <span class="v3-hist-event-count"
                                         x-text="(() => { const c = entry.changes; const total = (c.cfDetails?.length || 0) + (c.scoreDetails?.length || 0) + (c.qualityDetails?.length || 0) + (c.settingsDetails?.length || 0); return total + ' change' + (total !== 1 ? 's' : ''); })()"></span>
                                   <span class="v3-hist-event-preview"
@@ -828,11 +828,11 @@
                                              Sonarr blue when something is unsynced; green when fully
                                              in sync. -->
                                         <div style="background:var(--bg-card);border:1px solid var(--text-muted-secondary);border-radius:8px;padding:10px 14px;margin-bottom:20px;display:flex;align-items:center;gap:10px;flex-wrap:wrap;box-shadow:0 2px 6px var(--alpha-shadow)"
-                                             :style="{ borderColor: compareAdjustedCounts(cr).allDiffs > 0 || (cr.summary?.extra||0) > 0 || (cr.summary?.settingsDiffs||0) > 0 || (cr.summary?.qualityDiffs||0) > 0 || (cr.qualityStructure && cr.qualityStructure.hasDrift) ? 'var(--app-color)' : 'var(--accent-green)' }">
+                                             :style="{ borderColor: compareAdjustedCounts(cr).allDiffs > 0 || (cr.summary?.extra||0) > 0 || (cr.summary?.settingsDiffs||0) > 0 || (cr.summary?.qualityDiffs||0) > 0 || (cr.summary?.qualitySizeDiffs||0) > 0 || (cr.qualityStructure && cr.qualityStructure.hasDrift) ? 'var(--app-color)' : 'var(--accent-green)' }">
                                           <strong style="color:var(--text-primary);font-size:13px" x-text="ap.name"></strong>
                                           <span style="color:var(--app-color);font-size:12px;font-weight:600">vs</span>
                                           <strong style="color:var(--text-primary);font-size:13px" x-text="cr.trashProfileName"></strong>
-                                          <span x-show="compareAdjustedCounts(cr).allDiffs === 0 && (cr.summary?.extra||0) === 0 && (cr.summary?.settingsDiffs||0) === 0 && (cr.summary?.qualityDiffs||0) === 0 && !(cr.qualityStructure && cr.qualityStructure.hasDrift)"
+                                          <span x-show="compareAdjustedCounts(cr).allDiffs === 0 && (cr.summary?.extra||0) === 0 && (cr.summary?.settingsDiffs||0) === 0 && (cr.summary?.qualityDiffs||0) === 0 && (cr.summary?.qualitySizeDiffs||0) === 0 && !(cr.qualityStructure && cr.qualityStructure.hasDrift)"
                                                 style="color:var(--accent-green);font-size:13px;font-weight:500;margin-left:8px">&#10003; Profile fully in sync</span>
                                           <div style="margin-left:auto;display:flex;gap:6px;flex-wrap:wrap">
                                             <!-- Edit & Sync — opens the profile editor pre-loaded with
@@ -878,6 +878,19 @@
                                               <span class="cmp-side-label">Qualities</span>
                                               <span class="cmp-side-count" x-text="((cr.settingsDiffs || []).filter(s => s.name === 'Cutoff' && !s.match).length + (cr.qualityDiffs || []).filter(q => !q.match).length) || ''"></span>
                                             </button>
+                                            <!-- Only on the versions that keep sizes on the
+                                                 quality profile, which is what a non-empty
+                                                 qualitySizeDiffs means. Its own entry rather than
+                                                 rows inside Qualities: 22 size rows would double
+                                                 that table. -->
+                                            <template x-if="(cr.qualitySizeDiffs || []).length > 0">
+                                              <button type="button" class="cmp-side-item"
+                                                      :class="{ active: compareFilter === 'quality-sizes', inactive: (cr.summary?.qualitySizeDiffs || 0) === 0 }"
+                                                      @click="compareFilter = 'quality-sizes'">
+                                                <span class="cmp-side-label">Quality Sizes</span>
+                                                <span class="cmp-side-count" x-text="(cr.summary?.qualitySizeDiffs || 0) || ''"></span>
+                                              </button>
+                                            </template>
                                             <button type="button" class="cmp-side-item"
                                                     :class="{ active: compareFilter === 'quality-order', inactive: compareAdjustedCounts(cr).qualityOrder === 0 }"
                                                     @click="compareFilter = 'quality-order'">
@@ -994,6 +1007,42 @@
                                                             <div style="font-size:11px;opacity:0.7" x-text="'Group: ' + (qd.desiredGroup || 'Ungrouped')"></div>
                                                           </template>
                                                         </td>
+                                                      </tr>
+                                                    </template>
+                                                  </tbody>
+                                                </table>
+                                              </div>
+                                            </template>
+
+                                            <!-- ===== Quality Sizes ===== -->
+                                            <template x-if="compareFilter === 'quality-sizes'">
+                                              <div class="card cmp-section cmp-section-settings" style="margin-bottom:10px;overflow:hidden">
+                                                <div class="cmp-section-header">
+                                                  <span class="cmp-section-title">Quality Sizes</span>
+                                                  <!-- The numbers mean nothing without saying
+                                                       whose they are: this rule's own set, or the
+                                                       guide's default for a profile with no rule. -->
+                                                  <template x-if="cr.qualitySizeSource">
+                                                    <span style="font-size:12px;color:var(--text-muted)" x-text="'Guide column: ' + cr.qualitySizeSource"></span>
+                                                  </template>
+                                                </div>
+                                                <table class="cmp-settings-table">
+                                                  <thead>
+                                                    <tr>
+                                                      <th class="col-name">Quality</th>
+                                                      <th class="col-value">Current</th>
+                                                      <th class="col-value">Guide</th>
+                                                    </tr>
+                                                  </thead>
+                                                  <tbody>
+                                                    <template x-for="qs in (cr.qualitySizeDiffs || [])" :key="'qsz-'+qs.quality">
+                                                      <tr>
+                                                        <td class="name">
+                                                          <span x-text="qs.quality"></span>
+                                                          <div style="font-size:11px;opacity:0.7">min / pref / max</div>
+                                                        </td>
+                                                        <td class="current-cell" :class="qs.match ? 'current-match' : 'current-diff'" x-text="qs.current"></td>
+                                                        <td class="guide" x-text="qs.desired"></td>
                                                       </tr>
                                                     </template>
                                                   </tbody>
@@ -1191,7 +1240,7 @@
 
                                             
                                             <!-- ===== Required CFs (Format Items) ===== -->
-                                            <template x-if="!['general','quality','quality-order','extra','optional'].includes(compareFilter) && cmpRequiredVisibleIn(cr, compareFilter)">
+                                            <template x-if="!['general','quality','quality-sizes','quality-order','extra','optional'].includes(compareFilter) && cmpRequiredVisibleIn(cr, compareFilter)">
                                               <div class="card cmp-section cmp-section-required" style="margin-bottom:10px;overflow:hidden">
                                                 <div class="cmp-section-header">
                                                   <span class="cmp-section-title">Required CFs (Format Items)</span>
@@ -1236,7 +1285,7 @@
                                                  optional groups, preserving the All Diffs visual
                                                  ordering (Format Items -> Default on -> Optional). -->
                                             <template x-for="g in [...((cr.groups || []).filter(g => g.defaultEnabled)), ...((cr.groups || []).filter(g => !g.defaultEnabled))]" :key="'grp-'+g.name">
-                                              <template x-if="!['general','quality','quality-order','extra'].includes(compareFilter) && cmpGroupVisibleIn(g, compareFilter)">
+                                              <template x-if="!['general','quality','quality-sizes','quality-order','extra'].includes(compareFilter) && cmpGroupVisibleIn(g, compareFilter)">
                                                 <div class="card cmp-section" :class="g.defaultEnabled ? 'cmp-section-default-on' : 'cmp-section-optional'" style="margin-bottom:10px;overflow:hidden">
                                                   <div class="cmp-section-header">
                                                     <span class="cmp-section-title" x-text="g.name"></span>
@@ -1331,7 +1380,7 @@
                                             </template>
 
                                             <!-- Empty-state: nothing visible in current pane. -->
-                                            <template x-if="!['general','quality','quality-order'].includes(compareFilter) &&
+                                            <template x-if="!['general','quality','quality-sizes','quality-order'].includes(compareFilter) &&
                                                             !cmpRequiredVisibleIn(cr, compareFilter) &&
                                                             !(cr.groups || []).some(g => cmpGroupVisibleIn(g, compareFilter)) &&
                                                             !((compareFilter === 'extra' || compareFilter === 'all-diffs' || compareFilter === 'all-active') && (cr.extraCFs || []).length > 0)">

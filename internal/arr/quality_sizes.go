@@ -32,6 +32,22 @@ func QualityDefinitionsCarrySizes(defs []ArrQualityDefinition) bool {
 	return false
 }
 
+// ProfileItemsCarrySizes is the same question asked of a quality profile's
+// items, for the places that hold a profile but not the definition list. The
+// versions that keep sizes on the profile put all three fields on every
+// quality there; the versions that do not have no such fields at all.
+func ProfileItemsCarrySizes(items []ArrQualityItem) bool {
+	for _, it := range items {
+		if it.MinSize != nil || it.MaxSize != nil || it.PreferredSize != nil {
+			return true
+		}
+		if len(it.Items) > 0 && ProfileItemsCarrySizes(it.Items) {
+			return true
+		}
+	}
+	return false
+}
+
 // KeepsQualitySizesPerProfile asks the instance where its quality sizes live.
 // Convenience for callers that do not already hold the definition list; the
 // ones that do should call QualityDefinitionsCarrySizes directly rather than

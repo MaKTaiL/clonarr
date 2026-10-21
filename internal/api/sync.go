@@ -36,6 +36,21 @@ func qualityOverrideSummary(req core.SyncRequest) string {
 	return "none"
 }
 
+// findRuleFor returns the live rule managing one Arr profile, or nil. Used to
+// fall back to the rule's stored intent for fields a caller may not have sent.
+func (s *Server) findRuleFor(instanceID string, arrProfileID int) *core.AutoSyncRule {
+	if instanceID == "" || arrProfileID <= 0 {
+		return nil
+	}
+	rules := s.Core.Config.Get().AutoSync.Rules
+	for i := range rules {
+		if rules[i].InstanceID == instanceID && rules[i].ArrProfileID == arrProfileID && rules[i].OrphanedAt == "" {
+			return &rules[i]
+		}
+	}
+	return nil
+}
+
 func (s *Server) handleDryRun(w http.ResponseWriter, r *http.Request) {
 	r.Body = http.MaxBytesReader(w, r.Body, 32768)
 	var req core.SyncRequest
@@ -78,6 +93,10 @@ func (s *Server) handleDryRun(w http.ResponseWriter, r *http.Request) {
 	}
 	customCFs := s.Core.CustomCFs.List(inst.Type)
 	lastSyncedCFs := s.Core.GetLastSyncedCFs(req.InstanceID, req.ArrProfileID, req.Behavior)
+	// Per-profile quality sizes. The saved sets come from config, never from
+	// the request body, and the intent falls back to the rule when the caller
+	// did not send one. See FillQualitySizeIntent.
+	core.FillQualitySizeIntent(&req, s.findRuleFor(req.InstanceID, req.ArrProfileID), s.Core.Config.Get().QualitySizeSets)
 	plan, err := core.BuildSyncPlan(ad, inst, req, imported, customCFs, lastSyncedCFs, s.Core.HTTPClient, nil)
 	if err != nil {
 		log.Printf("Dry-run error for %s: %v", inst.Name, err)
@@ -179,6 +198,7 @@ func (s *Server) handleApply(w http.ResponseWriter, r *http.Request) {
 	customCFs := s.Core.CustomCFs.List(inst.Type)
 	lastSyncedCFs := s.Core.GetLastSyncedCFs(req.InstanceID, req.ArrProfileID, req.Behavior)
 	behavior := core.ResolveSyncBehavior(req.Behavior)
+	core.FillQualitySizeIntent(&req, s.findRuleFor(req.InstanceID, req.ArrProfileID), s.Core.Config.Get().QualitySizeSets)
 	plan, err := core.BuildSyncPlan(ad, inst, req, imported, customCFs, lastSyncedCFs, s.Core.HTTPClient, op)
 	if err != nil {
 		log.Printf("Apply plan error for %s: %v", inst.Name, err)
@@ -412,14 +432,19 @@ func (s *Server) handleApply(w http.ResponseWriter, r *http.Request) {
 		QualityStructure:  req.QualityStructure,
 		Overrides:         req.Overrides,
 		Behavior:          req.Behavior,
-		KeepArrCFIDs:      req.KeepArrCFIDs,
-		CFsCreated:        result.CFsCreated,
-		CFsUpdated:        result.CFsUpdated,
-		ScoresUpdated:     result.ScoresUpdated,
-		LastSync:          now,
-		Changes:           changes,
-		TriggerType:       core.TriggerTypeFromSource(triggerSource),
-		Categories:        core.DeriveSyncCategories(result),
+
+		// Post-FillQualitySizeIntent, so this records what was actually
+		// written rather than only what the editor happened to send.
+		QualitySizeSource:    req.QualitySizeSource,
+		QualitySizeOverrides: req.QualitySizeOverrides,
+		KeepArrCFIDs:         req.KeepArrCFIDs,
+		CFsCreated:           result.CFsCreated,
+		CFsUpdated:           result.CFsUpdated,
+		ScoresUpdated:        result.ScoresUpdated,
+		LastSync:             now,
+		Changes:              changes,
+		TriggerType:          core.TriggerTypeFromSource(triggerSource),
+		Categories:           core.DeriveSyncCategories(result),
 	}
 	// AppliedAt freezes the "when changes landed" timestamp. Only set when
 	// the entry carries real changes — baseline / no-op entries leave it
@@ -526,6 +551,15 @@ func (s *Server) handleApply(w http.ResponseWriter, r *http.Request) {
 				cfg.AutoSync.Rules[i].QualityStructure = req.QualityStructure
 				cfg.AutoSync.Rules[i].Behavior = req.Behavior
 				cfg.AutoSync.Rules[i].Overrides = req.Overrides
+				// Only callers that own the Quality size tab send these.
+				// Compare apply, rollback and Sync All do not, and must not
+				// reset a rule's size source to off by omission.
+				if req.QualitySizeSource != "" {
+					cfg.AutoSync.Rules[i].QualitySizeSource = req.QualitySizeSource
+				}
+				if req.QualitySizeOverrides != nil {
+					cfg.AutoSync.Rules[i].QualitySizeOverrides = req.QualitySizeOverrides
+				}
 				// Editor state, not sync input. Only callers that actually
 				// own the toggle send it; everyone else leaves it as it was.
 				if req.CustomizeEnabled != nil {
@@ -646,11 +680,13 @@ func (s *Server) handleApply(w http.ResponseWriter, r *http.Request) {
 			ExcludedCFs:          req.ExcludedCFs,
 			KeepArrCFIDs:         req.KeepArrCFIDs,
 			ScoreOverrides:       persistedScoreOverrides,
-			QualityOverrides:    req.QualityOverrides,
+			QualityOverrides:     req.QualityOverrides,
 			QualityStructure:     req.QualityStructure,
 			Behavior:             req.Behavior,
 			Overrides:            req.Overrides,
 			CustomizeEnabled:     req.CustomizeEnabled,
+			QualitySizeSource:    req.QualitySizeSource,
+			QualitySizeOverrides: req.QualitySizeOverrides,
 			LastSyncTime:         nowSync,
 			UpdatedAt:            nowSync,
 			LastSyncCommit:       currentCommit,
