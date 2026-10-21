@@ -212,10 +212,55 @@ export default {
     // Allowed qualities the set does not cover still belong here, showing the
     // instance's own value, because that is exactly where someone might want
     // to set something themselves.
+    // The qualities the editor currently allows, as leaf name to bool, or null
+    // when it has nothing to say and the row's own flag stands.
+    //
+    // Read live from the editor rather than taken from the response, because
+    // the Qualities editor changes this without a save: switching Bluray on
+    // has to put a Bluray row here straight away. The backend's flags still
+    // carry the view until the profile detail has loaded, which happens after
+    // this tab's first request.
+    //
+    // Same leaf-flattening the overview diff uses: a group's members inherit
+    // the group's state.
+    pdQSAllowedNames() {
+      const flatten = (items) => {
+        const m = new Map();
+        for (const it of (items || [])) {
+          if (it.items && it.items.length > 0) {
+            for (const leaf of it.items) {
+              const name = typeof leaf === 'string' ? leaf : (leaf?.name || leaf?.quality?.name);
+              if (name) m.set(name, !!it.allowed);
+            }
+            continue;
+          }
+          const name = it.name || it.quality?.name;
+          if (name) m.set(name, !!it.allowed);
+        }
+        return m;
+      };
+      if (this.qualityStructure && this.qualityStructure.length > 0) {
+        return flatten(this.qualityStructure);
+      }
+      const base = flatten(this.profileDetail?.detail?.profile?.items);
+      if (!base.size) return null;
+      // The legacy flat map, still what a rule saved before qualityStructure
+      // carries.
+      for (const [name, allowed] of Object.entries(this.qualityOverrides || {})) {
+        base.set(name, !!allowed);
+      }
+      return base;
+    },
+
+    pdQSRowAllowed(row) {
+      const names = this.pdQSAllowedNames();
+      return names ? !!names.get(row.quality) : !!row.allowed;
+    },
+
     pdQSVisibleRows() {
       const rows = this.pdQSRows || [];
       if (this.pdQSShowAll) return rows;
-      const allowed = rows.filter(row => row.allowed || this.pdQSIsCustom(row.quality));
+      const allowed = rows.filter(row => this.pdQSRowAllowed(row) || this.pdQSIsCustom(row.quality));
       if (allowed.length) return allowed;
       // Nothing is marked allowed, which is exactly what the blank-profile
       // template looks like: the app ships it with every quality off. A

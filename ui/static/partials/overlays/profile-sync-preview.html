@@ -1919,13 +1919,13 @@
 
               <template x-for="row in pdQSVisibleRows()" :key="row.quality">
                 <div>
-                  <div class="pqs-row" :style="row.allowed ? {} : { opacity: '0.6' }">
+                  <div class="pqs-row" :style="pdQSRowAllowed(row) ? {} : { opacity: '0.6' }">
                     <div class="pqs-name">
                       <span x-text="row.quality"></span>
                       <template x-if="row.group">
                         <span style="font-size:11px;color:var(--text-muted)" x-text="' · ' + row.group"></span>
                       </template>
-                      <template x-if="!row.allowed">
+                      <template x-if="!pdQSRowAllowed(row)">
                         <span style="font-size:11px;color:var(--text-muted)"> · not allowed</span>
                       </template>
                     </div>
