@@ -1898,7 +1898,11 @@
                   <span x-text="', ' + pdQSHiddenCount() + ' hidden'"></span>
                 </template>
               </div>
+              <!-- Nothing to reveal means no button: every quality is already
+                   on screen, so offering "Show all qualities" reads as though
+                   something were still hidden. -->
               <button class="qs-mode-btn"
+                      x-show="pdQSShowAll || pdQSHiddenCount() > 0"
                       @click="pdQSShowAll = !pdQSShowAll"
                       x-tt="'Show every quality the instance knows about, including the ones this profile does not allow.'"
                       x-text="pdQSShowAll ? 'Show only this profile\'s' : 'Show all qualities'"></button>

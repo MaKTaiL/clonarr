@@ -115,6 +115,9 @@ func (s *Server) handleProfileQualitySizes(w http.ResponseWriter, r *http.Reques
 	}
 	preferred := r.URL.Query().Get("instanceId")
 	arrProfileID, _ := strconv.Atoi(r.URL.Query().Get("arrProfileId"))
+	// The guide profile being browsed, when there is one. Only used to mark
+	// which qualities it allows while no profile exists on the instance yet.
+	trashID := r.URL.Query().Get("trashId")
 
 	cfg := s.Core.Config.Get()
 	candidates := make([]core.Instance, 0, 2)
@@ -234,7 +237,16 @@ func (s *Server) handleProfileQualitySizes(w http.ResponseWriter, r *http.Reques
 		UserSets:  cfg.QualitySizeSets,
 	})
 
-	resp["rows"] = buildQSProfileRows(items, sizes, ruleOverrides)
+	// The instance's blank-profile template has every quality switched off, so
+	// its allowed flags say nothing about the profile the user is looking at.
+	// Take them from the guide profile instead, or every row would claim "not
+	// allowed" about a profile that does allow some.
+	var allowedNames map[string]bool
+	if arrProfileID == 0 {
+		allowedNames = guideAllowedQualities(s.Core.Trash.GetAppData(target.Type), trashID)
+	}
+
+	resp["rows"] = buildQSProfileRows(items, sizes, ruleOverrides, allowedNames)
 	writeJSON(w, resp)
 }
 
@@ -244,7 +256,46 @@ func (s *Server) handleProfileQualitySizes(w http.ResponseWriter, r *http.Reques
 // qualities, so a group contributes its members and its name as context. A
 // member inherits the group's allowed state, which is what the profile
 // actually stores.
-func buildQSProfileRows(items []arr.ArrQualityItem, sizes map[string]core.QualitySizeTriple, overrides map[string]core.QSOverride) []qsProfileRow {
+// guideAllowedQualities returns the quality names a guide profile allows, or
+// nil when there is no such profile to read. Used only for a profile that does
+// not exist on the instance yet.
+func guideAllowedQualities(ad *core.AppData, trashID string) map[string]bool {
+	if ad == nil || trashID == "" {
+		return nil
+	}
+	var profile *core.TrashQualityProfile
+	for _, p := range ad.Profiles {
+		if p.TrashID == trashID {
+			profile = p
+			break
+		}
+	}
+	if profile == nil {
+		return nil
+	}
+	out := map[string]bool{}
+	for _, it := range profile.Items {
+		if !it.Allowed {
+			continue
+		}
+		if len(it.Items) > 0 {
+			// A member inherits the group's allowed state, which is what the
+			// profile does.
+			for _, member := range it.Items {
+				out[member] = true
+			}
+			continue
+		}
+		out[it.Name] = true
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+// allowedNames, when not nil, replaces the items' own allowed flags.
+func buildQSProfileRows(items []arr.ArrQualityItem, sizes map[string]core.QualitySizeTriple, overrides map[string]core.QSOverride, allowedNames map[string]bool) []qsProfileRow {
 	rows := []qsProfileRow{}
 	var walk func(its []arr.ArrQualityItem, group string)
 	walk = func(its []arr.ArrQualityItem, group string) {
@@ -264,10 +315,14 @@ func buildQSProfileRows(items []arr.ArrQualityItem, sizes map[string]core.Qualit
 			if name == "" {
 				continue
 			}
+			allowed := it.Allowed
+			if allowedNames != nil {
+				allowed = allowedNames[name]
+			}
 			row := qsProfileRow{
 				Quality: name,
 				Group:   group,
-				Allowed: it.Allowed,
+				Allowed: allowed,
 				Current: qsTriple{Min: it.MinSize, Preferred: it.PreferredSize, Max: it.MaxSize},
 			}
 			if t, ok := sizes[name]; ok {

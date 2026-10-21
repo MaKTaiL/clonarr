@@ -38,7 +38,7 @@ func TestBuildQSProfileRowsFlattensLeavesAndAttributes(t *testing.T) {
 	}
 	overrides := map[string]core.QSOverride{"Bluray-1080p": {Min: 7, Preferred: 40, Max: 60}}
 
-	rows := buildQSProfileRows(items, sizes, overrides)
+	rows := buildQSProfileRows(items, sizes, overrides, nil)
 	if len(rows) != 4 {
 		t.Fatalf("want four leaves, got %d", len(rows))
 	}
@@ -72,5 +72,66 @@ func TestBuildQSProfileRowsFlattensLeavesAndAttributes(t *testing.T) {
 	// Highest priority first, which is the order both Arr UIs show.
 	if rows[0].Quality != "Bluray-1080p" || rows[len(rows)-1].Quality != "SDTV" {
 		t.Errorf("order: got %s … %s", rows[0].Quality, rows[len(rows)-1].Quality)
+	}
+}
+
+// The blank-profile template the app offers for a profile that does not exist
+// yet has every quality switched off, so its allowed flags say nothing about
+// the guide profile the user is looking at. Without the override every row
+// claimed "not allowed" about a profile that does allow some, and the default
+// view, which lists what the profile allows, came out empty.
+func TestBuildQSProfileRowsTakesAllowedFromTheGuideProfile(t *testing.T) {
+	blank := []arr.ArrQualityItem{
+		qsItem("SDTV", false, nil, nil, nil),
+		{ID: 1000, Name: "WEB 1080p", Allowed: false, Items: []arr.ArrQualityItem{
+			qsItem("WEBRip-1080p", false, nil, nil, nil),
+			qsItem("WEBDL-1080p", false, nil, nil, nil),
+		}},
+	}
+	rows := buildQSProfileRows(blank, nil, nil, map[string]bool{
+		"WEBDL-1080p": true,
+		"WEBRip-1080p": true,
+	})
+	by := map[string]qsProfileRow{}
+	for _, r := range rows {
+		by[r.Quality] = r
+	}
+	for _, name := range []string{"WEBDL-1080p", "WEBRip-1080p"} {
+		if !by[name].Allowed {
+			t.Errorf("%s: the guide profile allows it, want allowed", name)
+		}
+	}
+	if by["SDTV"].Allowed {
+		t.Error("SDTV: the guide profile does not allow it, want not allowed")
+	}
+}
+
+// A group's members inherit its allowed state, which is what the profile does.
+func TestGuideAllowedQualitiesExpandsGroups(t *testing.T) {
+	ad := &core.AppData{Profiles: []*core.TrashQualityProfile{{
+		TrashID: "web-1080p",
+		Items: []core.QualityItem{
+			{Name: "SDTV", Allowed: false},
+			{Name: "WEB 1080p", Allowed: true, Items: []string{"WEBDL-1080p", "WEBRip-1080p"}},
+			{Name: "Bluray-1080p", Allowed: true},
+		},
+	}}}
+	got := guideAllowedQualities(ad, "web-1080p")
+	want := map[string]bool{"WEBDL-1080p": true, "WEBRip-1080p": true, "Bluray-1080p": true}
+	if len(got) != len(want) {
+		t.Fatalf("want %d allowed, got %d (%v)", len(want), len(got), got)
+	}
+	for name := range want {
+		if !got[name] {
+			t.Errorf("%s: want allowed", name)
+		}
+	}
+	// A profile the guide does not have must not be reported as "allows
+	// nothing", which would hide every row. Nil means "no opinion".
+	if guideAllowedQualities(ad, "not-a-profile") != nil {
+		t.Error("unknown trash id: want nil")
+	}
+	if guideAllowedQualities(nil, "web-1080p") != nil {
+		t.Error("no app data: want nil")
 	}
 }

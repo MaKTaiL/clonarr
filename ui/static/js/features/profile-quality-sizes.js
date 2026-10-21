@@ -73,6 +73,10 @@ export default {
       try {
         const q = new URLSearchParams({ app, arrProfileId: String(arrId) });
         if (prefer) q.set('instanceId', prefer);
+        // Lets the backend mark which qualities this guide profile allows
+        // while it does not exist on the instance yet.
+        const trashId = this.profileDetail?.profile?.trashId;
+        if (trashId) q.set('trashId', trashId);
         const r = await fetch(`/api/profile-quality-sizes?${q}`);
         const stillCurrent = () =>
           `${this.pdQSAppType()}|${this.pdQSPreferredInstanceId()}|${this.pdQSArrProfileId()}` === key;
