@@ -28,6 +28,7 @@ type Config struct {
 	DebugLogging         bool                                      `json:"debugLogging"`                   // Write detailed operations to /config/debug.log
 	QualitySizeOverrides map[string]map[string]QSOverride          `json:"qualitySizeOverrides,omitempty"` // instanceID → quality name → override
 	QualitySizeAutoSync  map[string]QSAutoSync                     `json:"qualitySizeAutoSync,omitempty"`  // instanceID → auto-sync settings
+	QualitySizeSets      []QualitySizeSet                          `json:"qualitySizeSets,omitempty"`      // user-defined quality size sets, selectable per profile alongside the guide's own
 	NamingAutoSync       map[string]map[string]NamingFieldBinding  `json:"namingAutoSync,omitempty"`       // instanceID → naming-field key → binding (opt-in, per-field; #5)
 	NamingApplied        map[string]map[string]NamingAppliedRecord `json:"namingApplied,omitempty"`        // instanceID → field → what clonarr last applied (manual OR auto): the intended scheme + fingerprint. Source for drift + update detection (#5)
 	NamingChanges        map[string]map[string][]NamingChangeEvent `json:"namingChanges,omitempty"`        // instanceID → field → change events (newest last, capped) for per-field history + restore (#5)
@@ -273,6 +274,20 @@ type AutoSyncRule struct {
 	// than inferring it from scores and opt-ins. Nil on rules saved before
 	// the field existed; the editor falls back to inference for those.
 	CustomizeEnabled *bool `json:"customizeEnabled,omitempty"`
+
+	// QualitySizeSource says where this rule's per-profile quality sizes come
+	// from, on the versions that keep sizes on the profile rather than in one
+	// shared list. One of the QSSource constants. Empty means off.
+	//
+	// Only read when the target instance keeps sizes per profile, which is
+	// decided from the shape of its quality definition list and never from a
+	// version string. On Radarr and Sonarr 4 the field is ignored entirely.
+	QualitySizeSource string `json:"qualitySizeSource,omitempty"`
+	// QualitySizeOverrides are the user's own numbers for individual
+	// qualities, keyed by quality name. An override wins over whatever the
+	// source resolves to, and is where "leave my value alone" lives as an
+	// explicit choice rather than a side effect.
+	QualitySizeOverrides map[string]QSOverride `json:"qualitySizeOverrides,omitempty"`
 }
 
 // SyncBehavior controls how the sync engine handles CF additions, score overrides, and removals.
@@ -324,6 +339,42 @@ type QSOverride struct {
 	Preferred float64 `json:"preferred"`
 	Max       float64 `json:"max"`
 }
+
+// QualitySizeSet is a named set of quality sizes the user saved, selectable
+// wherever one of the guide's own sets is. Same row type as a guide set so one
+// picker can list both; it simply has no trash_id.
+//
+// Scoped to an app because the quality names differ between Radarr and Sonarr.
+// Within an app it is reusable across instances and profiles, which is the
+// point of saving it. A set naming only some qualities is valid: the ones it
+// leaves out keep whatever the instance has, the same rule the guide's own
+// partial sets rely on.
+type QualitySizeSet struct {
+	ID        string             `json:"id"`
+	Name      string             `json:"name"`
+	AppType   string             `json:"appType"` // "radarr" or "sonarr"
+	Qualities []QualitySizeEntry `json:"qualities"`
+}
+
+// Quality size source values for AutoSyncRule.QualitySizeSource.
+//
+// An empty string means off, and that is the entire migration: every rule that
+// existed before this feature has no value, so it writes no sizes and no
+// profile is touched on upgrade. Nothing backfills the field.
+const (
+	QSSourceOff       = "off"     // take no set; only per-quality overrides are written
+	QSSourceGuide     = "guide"   // resolve the profile's own guide reference, then the app default
+	QSSourceSetPfx    = "guide:"  // a named guide set, by trash_id
+	QSSourceCustomPfx = "custom:" // a set the user saved, by its id
+)
+
+// There is deliberately no "captured" source, which an earlier draft had for
+// reusing the sizes an imported profile brought with it. QualityItem holds one
+// size triple and a group's members as bare names, and the export path copies
+// a group's sizes from the group row, which on Sonarr v5 never carries any.
+// Such a source would therefore cover only the qualities that sit outside a
+// group, silently, which is worse than not offering it. Carrying it properly
+// means per-member sizes in the import model.
 
 // NamingFieldBinding: one auto-synced naming field's binding to a TRaSH scheme (#5).
 // Per-field — Config.NamingAutoSync is instanceID → fieldKey → binding. Opt-in:
@@ -417,6 +468,11 @@ type SyncHistoryEntry struct {
 	QualityStructure []QualityItem   `json:"qualityStructure,omitempty"` // full structure override (trumps QualityOverrides)
 	Overrides        *SyncOverrides  `json:"overrides,omitempty"`
 	Behavior         *SyncBehavior   `json:"behavior,omitempty"`
+	// Per-profile quality size intent at the time of this sync, snapshotted
+	// for the same reason the CF selections are: a rollback or a rerun from
+	// history has to reproduce what was written, not what the rule says now.
+	QualitySizeSource    string                `json:"qualitySizeSource,omitempty"`
+	QualitySizeOverrides map[string]QSOverride `json:"qualitySizeOverrides,omitempty"`
 	// KeepArrCFIDs mirrors the rule's pinned-extras list. Snapshotted on
 	// every sync so a rerun from sync history (e.g. when the user has
 	// deleted the rule, or for orphaned profiles) can still preserve the
@@ -916,6 +972,17 @@ func (cs *ConfigStore) Get() Config {
 				cfg.SyncHistory[i].QualityOverrides[k] = v
 			}
 		}
+		// The rule-level twin of this map was copied correctly from the
+		// start and this one was missed, which is the easy half of the pair
+		// to forget: nothing reads it yet, so sharing the map off a request
+		// body was latent rather than visible. It stops being latent the
+		// moment a rollback writes through a Get() copy.
+		if len(sh.QualitySizeOverrides) > 0 {
+			cfg.SyncHistory[i].QualitySizeOverrides = make(map[string]QSOverride, len(sh.QualitySizeOverrides))
+			for k, v := range sh.QualitySizeOverrides {
+				cfg.SyncHistory[i].QualitySizeOverrides[k] = v
+			}
+		}
 		if len(sh.QualityStructure) > 0 {
 			cfg.SyncHistory[i].QualityStructure = cloneQualityItems(sh.QualityStructure)
 		}
@@ -981,6 +1048,17 @@ func (cs *ConfigStore) Get() Config {
 				inner[ik] = iv
 			}
 			cfg.QualitySizeOverrides[k] = inner
+		}
+	}
+	// Deep-copy QualitySizeSets. A set carries a slice, so copying the struct
+	// alone would share the backing array and let a clone's edits reach the
+	// original. This is the same trap that dropped the size fields out of
+	// cloneQualityItems, so the rows are copied one by one.
+	if cs.config.QualitySizeSets != nil {
+		cfg.QualitySizeSets = make([]QualitySizeSet, len(cs.config.QualitySizeSets))
+		for i, set := range cs.config.QualitySizeSets {
+			cfg.QualitySizeSets[i] = set
+			cfg.QualitySizeSets[i].Qualities = append([]QualitySizeEntry(nil), set.Qualities...)
 		}
 	}
 	// Deep-copy QualitySizeAutoSync
@@ -1077,6 +1155,12 @@ func (cs *ConfigStore) Get() Config {
 				cfg.AutoSync.Rules[i].ScoreOverrides = make(map[string]int, len(r.ScoreOverrides))
 				for k, v := range r.ScoreOverrides {
 					cfg.AutoSync.Rules[i].ScoreOverrides[k] = v
+				}
+			}
+			if len(r.QualitySizeOverrides) > 0 {
+				cfg.AutoSync.Rules[i].QualitySizeOverrides = make(map[string]QSOverride, len(r.QualitySizeOverrides))
+				for k, v := range r.QualitySizeOverrides {
+					cfg.AutoSync.Rules[i].QualitySizeOverrides[k] = v
 				}
 			}
 			if len(r.QualityOverrides) > 0 {

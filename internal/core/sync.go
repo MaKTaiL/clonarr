@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"math"
 	"net/http"
 	"sort"
 	"strconv"
@@ -87,6 +88,13 @@ type SyncPlan struct {
 	Summary         SyncSummary   `json:"summary"`
 	QualityPreview  []string      `json:"qualityPreview,omitempty"`  // e.g. "Bluray-2160p: Enabled → Disabled"
 	SettingsPreview []string      `json:"settingsPreview,omitempty"` // e.g. "Upgrade Until: WEB 1080p → WEB 2160p"
+	// QualitySizePreview is kept apart from QualityPreview so the sync
+	// modal can show a count while the dry run's expandable details still
+	// list every line. Choosing a set changes 14 to 20 sizes at once, and
+	// the Quality size tab already shows each number, so repeating them
+	// inline in the modal would bury the quality and settings lines that
+	// are not visible anywhere else.
+	QualitySizePreview []string `json:"qualitySizePreview,omitempty"` // e.g. "HDTV-1080p size: 4/95/125 → 15/995/1000"
 	// DanglingCustomCFs lists "custom:<id>" references on the rule whose
 	// underlying custom CF no longer exists in CustomCFs (the user deleted
 	// it). Apply paths feed this into CleanupDanglingCustomCFsOnRule after
@@ -124,6 +132,7 @@ func (p *SyncPlan) HasChanges() bool {
 	}
 	return p.Summary.CFsToCreate > 0 || p.Summary.CFsToUpdate > 0 ||
 		p.Summary.ScoresToSet > 0 || p.Summary.ScoresToZero > 0 ||
+		p.Summary.QualitySizesToSet > 0 ||
 		p.Summary.QualityChanged || p.CreateProfile
 }
 
@@ -136,6 +145,10 @@ type SyncSummary struct {
 	ScoresToSet     int  `json:"scoresToSet"`
 	ScoresUnchanged int  `json:"scoresUnchanged"`
 	ScoresToZero    int  `json:"scoresToZero"` // extra CFs that will be zeroed out
+	// QualitySizesToSet counts the qualities whose min, preferred or max
+	// this sync will change. Only ever non-zero where the instance keeps
+	// sizes on the profile.
+	QualitySizesToSet int `json:"qualitySizesToSet,omitempty"`
 	// MaxPossibleScore is the sum of every positive CF score that will be
 	// in the profile after this sync runs. This is exactly what
 	// Sonarr/Radarr enforce as the upper limit for Min Format Score
@@ -156,7 +169,7 @@ type SyncRequest struct {
 	ImportedProfileID string   `json:"importedProfileId,omitempty"` // alternative: sync from imported/custom profile
 	ArrProfileID      int      `json:"arrProfileId"`                // target Arr profile to set scores on (0 = create new)
 	ProfileName       string   `json:"profileName"`                 // custom name for new profile (optional)
-	SelectedCFs []string `json:"selectedCFs"` // optional: additional CF trash_ids from groups
+	SelectedCFs       []string `json:"selectedCFs"`                 // optional: additional CF trash_ids from groups
 	// ExcludedCFs: trash_ids of CFs that ARE in TRaSH defaults for this
 	// profile but the user has explicitly opted out of via the rule editor.
 	// Subtracted from the effective set after merging trash_defaults +
@@ -194,6 +207,16 @@ type SyncRequest struct {
 	// (Compare apply, rollback, Sync All) must leave the stored value alone
 	// rather than reset it to off.
 	CustomizeEnabled *bool `json:"customizeEnabled,omitempty"`
+	// QualitySizeSource and QualitySizeOverrides mirror the rule's per-profile
+	// quality size choice. Only acted on when the target instance keeps sizes
+	// on its profiles rather than in one shared list. Empty source means off.
+	QualitySizeSource    string                `json:"qualitySizeSource,omitempty"`
+	QualitySizeOverrides map[string]QSOverride `json:"qualitySizeOverrides,omitempty"`
+	// UserQualitySizeSets is filled in by the caller from config, never from
+	// the request body, which is why it carries json:"-". A caller that
+	// forgets it leaves a custom: source resolving to nothing, so no sizes are
+	// written: wrong, but in the direction that touches nobody's profile.
+	UserQualitySizeSets []QualitySizeSet `json:"-"`
 }
 
 // SyncOverrides allows users to override specific profile settings from TRaSH defaults.
@@ -794,7 +817,9 @@ func BuildSyncPlan(ad *AppData, instance Instance, req SyncRequest, imported *Im
 				for i := range qualityDefs {
 					qualityByName[qualityDefs[i].Quality.Name] = &qualityDefs[i]
 				}
-				newItems, err := resolveQualityItems(desiredItems, qualityByName)
+				// Same size map the apply will use, so a preview cannot
+				// disagree with what gets written.
+				newItems, err := resolveQualityItems(desiredItems, qualityByName, profileQualitySizes(req, ad, instance, qualityDefs))
 				if err == nil {
 					// Apply legacy flat overrides when no structure override
 					if len(req.QualityStructure) == 0 && len(req.QualityOverrides) > 0 {
@@ -818,7 +843,7 @@ func BuildSyncPlan(ad *AppData, instance Instance, req SyncRequest, imported *Im
 							if name == "" {
 								continue
 							}
-							
+
 							oldState, exists := oldAllowed[name]
 							if exists && oldState != item.Allowed {
 								suffix := ""
@@ -831,7 +856,7 @@ func BuildSyncPlan(ad *AppData, instance Instance, req SyncRequest, imported *Im
 									plan.QualityPreview = append(plan.QualityPreview, name+": Enabled → Disabled"+suffix)
 								}
 							}
-							
+
 							if len(item.Items) == 0 {
 								oldGrp, grpExists := oldGroups[name]
 								if grpExists || oldGrp != "" || groupName != "" {
@@ -848,7 +873,7 @@ func BuildSyncPlan(ad *AppData, instance Instance, req SyncRequest, imported *Im
 									}
 								}
 							}
-							
+
 							if len(item.Items) > 0 {
 								collectNewState(item.Items, name)
 							}
@@ -864,6 +889,20 @@ func BuildSyncPlan(ad *AppData, instance Instance, req SyncRequest, imported *Im
 						if orderCur != orderTgt && orderCurRev != orderTgt {
 							plan.QualityPreview = append(plan.QualityPreview, "Ordering changed (will be restored to profile configuration)")
 						}
+					}
+					// On the versions that keep sizes on the profile, a size is
+					// a change to the profile like any other, so the preview
+					// has to name it. Same two helpers the apply path uses, on
+					// the same resolved items, so a dry run cannot promise
+					// something different from what gets written.
+					//
+					// Placed after the ordering check on purpose: that one
+					// reads Summary.QualityChanged, and a size-only change
+					// must not make it claim the order moved.
+					if changes := diffQualitySizes(collectQualitySizes(targetProfile.Items), collectQualitySizes(newItems)); len(changes) > 0 {
+						plan.QualitySizePreview = append(plan.QualitySizePreview, changes...)
+						plan.Summary.QualitySizesToSet = len(changes)
+						plan.Summary.QualityChanged = true
 					}
 				}
 			}
@@ -975,11 +1014,11 @@ type SyncResult struct {
 	// CFCommits) so the History UI can join attribution + diff
 	// per row. nil when no diff was computed (e.g. pre-update GET
 	// failed) - downstream treats nil as "no spec diff to show".
-	CFSpecDiffs     map[string]*CFSpecDiff `json:"cfSpecDiffs,omitempty"`
-	ProfileCreated  bool     `json:"profileCreated,omitempty"`
-	ArrProfileID    int      `json:"arrProfileId,omitempty"`
-	ArrProfileName  string   `json:"arrProfileName,omitempty"`
-	Errors          []string `json:"errors"`
+	CFSpecDiffs    map[string]*CFSpecDiff `json:"cfSpecDiffs,omitempty"`
+	ProfileCreated bool                   `json:"profileCreated,omitempty"`
+	ArrProfileID   int                    `json:"arrProfileId,omitempty"`
+	ArrProfileName string                 `json:"arrProfileName,omitempty"`
+	Errors         []string               `json:"errors"`
 }
 
 // ExecuteSyncPlan applies a previously built sync plan.
@@ -1184,7 +1223,7 @@ func ExecuteSyncPlan(ad *AppData, instance Instance, req SyncRequest, plan *Sync
 			delete(selectedCFsMap, id)
 		}
 
-		arrProfile, err := BuildArrProfile(profile, ad, qualityDefs, languages, nameToID, selectedCFsMap, req.ProfileName, cfScoreOverrides, customCFs, req.QualityStructure)
+		arrProfile, err := BuildArrProfile(profile, ad, qualityDefs, languages, nameToID, selectedCFsMap, req.ProfileName, cfScoreOverrides, customCFs, req.QualityStructure, profileQualitySizes(req, ad, instance, qualityDefs))
 		if err != nil {
 			result.Errors = append(result.Errors, fmt.Sprintf("build profile: %v", err))
 			return result, nil
@@ -1587,7 +1626,17 @@ func ExecuteSyncPlan(ad *AppData, instance Instance, req SyncRequest, plan *Sync
 					itemsSource = req.QualityStructure
 				}
 
-				newItems, err := resolveQualityItems(itemsSource, qualityByName)
+				// What the instance has now, taken before the rebuild
+				// replaces targetProfile.Items. Needed because a size change
+				// produces no QualityDetails entry and no other delta, so
+				// without comparing it the updated flag stayed false and a
+				// size-only change was never sent: the branch below logged
+				// "no profile changes to send" and the user saw "No changes".
+				// It only appeared to work when the sync happened to change
+				// something else as well.
+				oldSizes := collectQualitySizes(targetProfile.Items)
+
+				newItems, err := resolveQualityItems(itemsSource, qualityByName, profileQualitySizes(req, ad, instance, qualityDefs))
 				if err != nil {
 					result.Errors = append(result.Errors, fmt.Sprintf("resolve quality items: %v", err))
 				} else {
@@ -1616,7 +1665,7 @@ func ExecuteSyncPlan(ad *AppData, instance Instance, req SyncRequest, plan *Sync
 							if name == "" {
 								continue
 							}
-							
+
 							oldState, exists := oldAllowed[name]
 							if exists && oldState != item.Allowed {
 								suffix := ""
@@ -1629,7 +1678,7 @@ func ExecuteSyncPlan(ad *AppData, instance Instance, req SyncRequest, plan *Sync
 									result.QualityDetails = append(result.QualityDetails, name+": Enabled → Disabled"+suffix)
 								}
 							}
-							
+
 							if len(item.Items) == 0 {
 								oldGrp, grpExists := oldGroups[name]
 								if grpExists || oldGrp != "" || groupName != "" {
@@ -1646,7 +1695,7 @@ func ExecuteSyncPlan(ad *AppData, instance Instance, req SyncRequest, plan *Sync
 									}
 								}
 							}
-							
+
 							if len(item.Items) > 0 {
 								collectNewState(item.Items, name)
 							}
@@ -1689,6 +1738,14 @@ func ExecuteSyncPlan(ad *AppData, instance Instance, req SyncRequest, plan *Sync
 					}
 					targetProfile.Items = append(unused, newItems...)
 					if len(result.QualityDetails) > 0 {
+						result.QualityUpdated = true
+						updated = true
+					}
+					// Sizes, compared by quality name against the snapshot.
+					// One line per quality so the toast and the sync history
+					// say what moved rather than just that something did.
+					if changes := diffQualitySizes(oldSizes, collectQualitySizes(targetProfile.Items)); len(changes) > 0 {
+						result.QualityDetails = append(result.QualityDetails, changes...)
 						result.QualityUpdated = true
 						updated = true
 					}
@@ -1873,6 +1930,7 @@ func BuildArrProfile(
 	cfScoreOverrides map[string]int,
 	customCFs []CustomCF,
 	qualityStructureOverride []QualityItem,
+	qualitySizes map[string]QualitySizeTriple,
 ) (*arr.ArrQualityProfile, error) {
 	// Build quality name → definition map
 	qualityByName := make(map[string]*arr.ArrQualityDefinition)
@@ -1887,7 +1945,7 @@ func BuildArrProfile(
 	if len(qualityStructureOverride) > 0 {
 		itemsSource = qualityStructureOverride
 	}
-	items, err := resolveQualityItems(itemsSource, qualityByName)
+	items, err := resolveQualityItems(itemsSource, qualityByName, qualitySizes)
 	if err != nil {
 		return nil, fmt.Errorf("resolve quality items: %w", err)
 	}
@@ -2100,7 +2158,11 @@ func friendlyArrErr(verb, cfName string, err error) string {
 // profile-level Arr call sites where there's no per-CF "name" to
 // include in the prefix — that case is what friendlyArrErr handles.
 func friendlyProfileErr(verb string, err error) string {
-	if extracted := extractArrErrorMessages(err.Error()); extracted != "" {
+	msg := err.Error()
+	if extracted := extractArrErrorMessages(msg); extracted != "" {
+		if arrServerFault(msg) {
+			return fmt.Sprintf("%s failed: Arr hit an internal error: %s. This is a fault in Arr rather than something in the rule, so the sync stays enabled and will retry.", verb, extracted)
+		}
 		return fmt.Sprintf("%s failed: %s", verb, extracted)
 	}
 	return fmt.Sprintf("%s: %v", verb, err)
@@ -2135,9 +2197,39 @@ func IsUserConfigError(s string) bool {
 	code := rest[:3]
 	switch code {
 	case "400", "409", "422":
+		// Status alone is not enough. Sonarr v5 answers at least one
+		// unhandled exception with 400 rather than 500: writing a quality
+		// profile whose minFormatScore exceeds the achievable score makes its
+		// validator take Max over an empty sequence when the instance has no
+		// custom formats, and it throws. Disabling the rule for that would be
+		// wrong twice over, since there is nothing in the rule to correct and
+		// the next sync would succeed as soon as a custom format exists.
+		if arrServerFault(s) {
+			return false
+		}
 		return true // bad request / conflict / unprocessable — user config
 	}
 	return false
+}
+
+// arrServerFault reports whether an Arr error body is an unhandled exception
+// rather than a validation rejection.
+//
+// The two shapes are distinct. A validation failure comes back as
+// FluentValidation entries carrying `errorMessage`. An unhandled exception
+// comes back as `{"message": "...", "description": "<.NET stack trace>"}`, and
+// a validation body never carries `description`. Requiring the exception
+// marker as well keeps this narrow: a body with a description but no stack
+// trace is still treated as the user's to fix.
+//
+// Erring toward "not user config" is the safe direction here. A rule left
+// enabled retries and surfaces the error; a rule disabled by mistake needs the
+// user to notice and turn it back on.
+func arrServerFault(body string) bool {
+	if !strings.Contains(body, `"description"`) {
+		return false
+	}
+	return strings.Contains(body, "Exception:") || strings.Contains(body, "System.")
 }
 
 // AllUserConfigErrors returns true when every entry in errs is a
@@ -2197,14 +2289,104 @@ func extractArrErrorMessages(s string) string {
 	if err := json.Unmarshal([]byte(body), &single); err == nil && single.ErrorMessage != "" {
 		return single.ErrorMessage
 	}
-	return ""
+	// Not a validation body. Arr answers an unhandled exception with
+	// `{"message": "...", "description": "<stack trace>"}`, and without this
+	// the user was shown the raw body: a truncated fragment of a .NET stack
+	// trace in a toast.
+	return arrGenericMessage(body)
+}
+
+// arrGenericMessage pulls the `message` field out of Arr's generic error body,
+// which is what Arr answers with when a request hits an unhandled exception
+// instead of a validation rule.
+//
+// Deliberately a string scan rather than a JSON parse. The callers receive a
+// body already truncated to 200 runes by the Arr client (see UpdateProfile),
+// and Arr pretty-prints this shape, so by the time it arrives it is cut
+// mid-value and will not unmarshal. `message` sits first and survives the cut;
+// `description` holds the stack trace, is what gets cut, and is not wanted.
+//
+// A quote inside the message would end the scan early, which shortens the text
+// rather than garbling it. Arr's messages are plain prose, so that has not come
+// up, and a short message beats a stack trace either way.
+func arrGenericMessage(body string) string {
+	const key = `"message"`
+	i := strings.Index(body, key)
+	if i < 0 {
+		return ""
+	}
+	rest := body[i+len(key):]
+	// open and close would shadow Go's builtins, hence the names.
+	openQuote := strings.IndexByte(rest, '"')
+	if openQuote < 0 {
+		return ""
+	}
+	// Only a colon and whitespace may sit between the key and its value,
+	// otherwise this matched something that merely contains the word.
+	for _, r := range rest[:openQuote] {
+		if r != ':' && r != ' ' && r != '\t' && r != '\n' && r != '\r' {
+			return ""
+		}
+	}
+	rest = rest[openQuote+1:]
+	closeQuote := strings.IndexByte(rest, '"')
+	if closeQuote < 0 {
+		return "" // truncated mid-message, nothing usable
+	}
+	return strings.TrimSpace(rest[:closeQuote])
+}
+
+// profileQualitySizes decides the per-profile quality sizes for one sync, or
+// returns nil when none should be written.
+//
+// The gate is the shape of the instance's quality definition list, never a
+// version string: a list that still carries the three size fields means this
+// instance keeps sizes in one shared list, where the per-profile path has no
+// business. An empty list means the read failed or the instance is in a state
+// we do not understand, and writing sizes into profiles on a guess is the
+// worse of the two mistakes, so that answers nil too.
+func profileQualitySizes(req SyncRequest, ad *AppData, instance Instance, qualityDefs []arr.ArrQualityDefinition) map[string]QualitySizeTriple {
+	if len(qualityDefs) == 0 || arr.QualityDefinitionsCarrySizes(qualityDefs) {
+		return nil
+	}
+	in := QualitySizeResolveInput{
+		Source:    req.QualitySizeSource,
+		Overrides: req.QualitySizeOverrides,
+		AppType:   instance.Type,
+		UserSets:  req.UserQualitySizeSets,
+	}
+	if ad != nil {
+		in.GuideSets = ad.QualitySizes
+	}
+	// ProfileRef stays empty until the guide publishes
+	// trash_quality_definition on its profiles, at which point the guide
+	// source resolves a profile's own reference first and the app default
+	// second. Until then the guide source falls back to the app default,
+	// which is what the guide author stated it means.
+	return ResolveQualitySizes(in)
 }
 
 // resolveQualityItems converts TRaSH quality items to Arr format using quality definitions.
+//
+// sizes carries per-profile quality sizes for the versions that keep them on
+// the profile, keyed by quality name. Nil means write no sizes at all, which
+// is what Radarr and Sonarr 4 have always received and what a rule with its
+// size source off receives on any version. Sizes are applied at the leaves
+// only: a single quality, or a member of a group. A group row never gets one,
+// measured against Sonarr 5.0.0 where not one of 24 group rows carried a size
+// while 41 of 48 members did, and the app's own /qualityprofile/schema puts
+// sizes on every quality and member but on none of its 4 group rows.
+//
+// This is the only path from stored intent to the three size fields in the
+// request body. Reading them off the incoming QualityItem instead, which is
+// what this did before, meant an imported profile's captured snapshot was
+// written back on every sync without the user choosing it. That snapshot is
+// no longer written at all: see the note by the QSSource constants for why it
+// could not be offered as a choice either.
 // Unknown quality names are skipped with a log warning instead of failing the entire sync —
 // this handles cases like group names ("WEB 2160p") appearing without sub-items, or
 // cross-type quality names (Radarr quality in a Sonarr profile). Fixes GitHub issue #10.
-func resolveQualityItems(trashItems []QualityItem, qualityByName map[string]*arr.ArrQualityDefinition) ([]arr.ArrQualityItem, error) {
+func resolveQualityItems(trashItems []QualityItem, qualityByName map[string]*arr.ArrQualityDefinition, sizes map[string]QualitySizeTriple) ([]arr.ArrQualityItem, error) {
 	items := make([]arr.ArrQualityItem, 0, len(trashItems))
 	groupID := 1000
 
@@ -2216,7 +2398,7 @@ func resolveQualityItems(trashItems []QualityItem, qualityByName map[string]*arr
 				log.Printf("Quality %q not found in definitions — skipping (may be a group name without sub-items or wrong app type)", ti.Name)
 				continue
 			}
-			items = append(items, arr.ArrQualityItem{
+			qi := arr.ArrQualityItem{
 				Quality: &arr.ArrQualityRef{
 					ID:         def.Quality.ID,
 					Name:       def.Quality.Name,
@@ -2226,12 +2408,9 @@ func resolveQualityItems(trashItems []QualityItem, qualityByName map[string]*arr
 				},
 				Items:   []arr.ArrQualityItem{},
 				Allowed: ti.Allowed,
-				// Nil today, and nil stays out of the body. When the guide
-				// starts publishing per-profile sizes these carry them.
-				MinSize:       ti.MinSize,
-				MaxSize:       ti.MaxSize,
-				PreferredSize: ti.PreferredSize,
-			})
+			}
+			applyQualitySize(&qi, sizes, def.Quality.Name)
+			items = append(items, qi)
 		} else {
 			// Quality group — resolve each sub-item, skip unknowns.
 			// Children inherit the group's Allowed state. Hardcoding true
@@ -2251,7 +2430,7 @@ func resolveQualityItems(trashItems []QualityItem, qualityByName map[string]*arr
 					log.Printf("Quality %q not found in definitions (group %q) — skipping member", subName, ti.Name)
 					continue
 				}
-				nested = append(nested, arr.ArrQualityItem{
+				member := arr.ArrQualityItem{
 					Quality: &arr.ArrQualityRef{
 						ID:         def.Quality.ID,
 						Name:       def.Quality.Name,
@@ -2261,12 +2440,13 @@ func resolveQualityItems(trashItems []QualityItem, qualityByName map[string]*arr
 					},
 					Items:   []arr.ArrQualityItem{},
 					Allowed: ti.Allowed,
-					// Group members inherit the group's sizes. A member-level
-					// value, if the guide ever has one, would be set here.
-					MinSize:       ti.MinSize,
-					MaxSize:       ti.MaxSize,
-					PreferredSize: ti.PreferredSize,
-				})
+				}
+				// By the member's own name, not the group's. The guide's sets
+				// disagree inside groups (one holds 50.4 next to 15, another
+				// 94.6 next to 25), so taking the row's value for everything
+				// under it would quietly flatten them.
+				applyQualitySize(&member, sizes, def.Quality.Name)
+				nested = append(nested, member)
 			}
 			// Reverse so first-in-clonarr-UI (top of group) ends up last in Arr API.
 			// Same convention as the top-level reversal below: Arr renders nested top-down
@@ -2277,6 +2457,13 @@ func resolveQualityItems(trashItems []QualityItem, qualityByName map[string]*arr
 				nested[i], nested[j] = nested[j], nested[i]
 			}
 			if len(nested) > 0 {
+				// No sizes on the group row. Measured against Sonarr 5.0.0:
+				// across six profiles not one of 24 group rows carried a
+				// size, while 41 of 48 group members did, and the app's own
+				// /qualityprofile/schema puts sizes on all 14 qualities and
+				// all 8 members but on none of its 4 group rows. Sizes
+				// belong to individual qualities; a group row only holds the
+				// members together. They are set on the members above.
 				items = append(items, arr.ArrQualityItem{
 					ID:      groupID,
 					Name:    ti.Name,
@@ -2629,4 +2816,170 @@ func resolveScoreCustom(cfID string, cf *CustomCF, scoreCtx string, cfScoreOverr
 		}
 	}
 	return 0
+}
+
+// applyQualitySize stamps one quality's sizes onto an Arr item. A nil map, a
+// missing name or a nil field all leave the item alone, which keeps the field
+// out of the JSON body and leaves whatever the instance has in place.
+//
+// The pointers are copied rather than shared: the same resolved triple is
+// applied to every profile in a Sync All run, and handing out the same pointer
+// would let one profile's later edit reach another's body.
+func applyQualitySize(item *arr.ArrQualityItem, sizes map[string]QualitySizeTriple, name string) {
+	if len(sizes) == 0 {
+		return
+	}
+	t, ok := sizes[name]
+	if !ok {
+		return
+	}
+	item.MinSize = copyFloatPtr(t.Min)
+	item.PreferredSize = copyFloatPtr(t.Preferred)
+	item.MaxSize = copyFloatPtr(t.Max)
+}
+
+// collectQualitySizes flattens a profile's items into quality name → sizes.
+// Leaves only: a group row carries no size, so including it would compare a
+// nil against a nil forever.
+func collectQualitySizes(items []arr.ArrQualityItem) map[string]QualitySizeTriple {
+	out := map[string]QualitySizeTriple{}
+	var walk func(its []arr.ArrQualityItem)
+	walk = func(its []arr.ArrQualityItem) {
+		for _, it := range its {
+			if len(it.Items) > 0 {
+				walk(it.Items)
+				continue
+			}
+			name := it.Name
+			if name == "" && it.Quality != nil {
+				name = it.Quality.Name
+			}
+			if name == "" {
+				continue
+			}
+			out[name] = QualitySizeTriple{Min: it.MinSize, Preferred: it.PreferredSize, Max: it.MaxSize}
+		}
+	}
+	walk(items)
+	return out
+}
+
+// diffQualitySizes reports the per-quality size changes between two snapshots,
+// one readable line each, sorted so the same change always reads the same way.
+//
+// Only qualities present in both are compared. A quality that appears or
+// disappears between the two is a structural change, which the allowed and
+// group comparisons already report, and saying it twice would double-count.
+//
+// A nil field in the new snapshot is "say nothing", not "set to unlimited":
+// UpdateProfile's preserveQualitySizes fills every nil from what the instance
+// already has, so the field never reaches the request body and the instance's
+// value stands. The comparison therefore has to be against the effective
+// value, new-or-else-old, and not against the raw new one.
+//
+// Getting that wrong is not cosmetic. The chosen set covers part of the
+// profile by design, 14 of 22 qualities for the guide's series set, so the
+// uncovered eight would each report a change to unlimited that never happens,
+// and each of those phantoms would mark the profile as needing a write. Every
+// sync would then push an identical body and never read as clean.
+func diffQualitySizes(before, after map[string]QualitySizeTriple) []string {
+	names := make([]string, 0, len(after))
+	for name := range after {
+		if _, ok := before[name]; ok {
+			names = append(names, name)
+		}
+	}
+	sort.Strings(names)
+
+	out := make([]string, 0, 4)
+	for _, name := range names {
+		b := before[name]
+		a := effectiveSizeTriple(before[name], after[name])
+		if sizeTripleEqual(b, a) {
+			continue
+		}
+		out = append(out, fmt.Sprintf("%s size: %s → %s", name, formatSizeTriple(b), formatSizeTriple(a)))
+	}
+	return out
+}
+
+// effectiveSizeTriple is what the instance will hold after a write: each field
+// the new snapshot names, and the current value wherever it says nothing.
+// Mirrors arr.preserveQualitySizes, which is what makes it true.
+func effectiveSizeTriple(current, next QualitySizeTriple) QualitySizeTriple {
+	pick := func(n, c *float64) *float64 {
+		if n == nil {
+			return c
+		}
+		return n
+	}
+	return QualitySizeTriple{
+		Min:       pick(next.Min, current.Min),
+		Preferred: pick(next.Preferred, current.Preferred),
+		Max:       pick(next.Max, current.Max),
+	}
+}
+
+func sizeTripleEqual(a, b QualitySizeTriple) bool {
+	return floatPtrEqual(a.Min, b.Min) &&
+		floatPtrEqual(a.Preferred, b.Preferred) &&
+		floatPtrEqual(a.Max, b.Max)
+}
+
+// floatPtrEqual treats nil as its own value rather than as zero. nil means the
+// instance has no number there, which its own UI shows as Unlimited, so nil and
+// 0.0 are different states and must not compare equal.
+func floatPtrEqual(a, b *float64) bool {
+	if a == nil || b == nil {
+		return a == nil && b == nil
+	}
+	// The API round-trips these as JSON floats, so compare with the same
+	// tolerance the instance-wide quality-size comparison uses.
+	return math.Abs(*a-*b) < 0.05
+}
+
+// QualitySizeDiffRow is one quality's current and wanted sizes, already
+// formatted. Exported for the Compare view, which lives outside this package
+// and must not reimplement the comparison: a second copy of "a nil wanted
+// field means leave it alone" would let Compare and the sync disagree about
+// what is in sync.
+type QualitySizeDiffRow struct {
+	Quality string `json:"quality"`
+	Current string `json:"current"`
+	Desired string `json:"desired"`
+	Match   bool   `json:"match"`
+}
+
+// DiffProfileQualitySizes compares a profile's own sizes against what would be
+// written, and reports every quality the profile has, matching or not, so the
+// caller can show the whole picture rather than only the differences.
+func DiffProfileQualitySizes(items []arr.ArrQualityItem, want map[string]QualitySizeTriple) []QualitySizeDiffRow {
+	current := collectQualitySizes(items)
+	names := make([]string, 0, len(current))
+	for name := range current {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	out := make([]QualitySizeDiffRow, 0, len(names))
+	for _, name := range names {
+		cur := current[name]
+		desired := effectiveSizeTriple(cur, want[name])
+		out = append(out, QualitySizeDiffRow{
+			Quality: name,
+			Current: formatSizeTriple(cur),
+			Desired: formatSizeTriple(desired),
+			Match:   sizeTripleEqual(cur, desired),
+		})
+	}
+	return out
+}
+
+func formatSizeTriple(t QualitySizeTriple) string {
+	f := func(v *float64) string {
+		if v == nil {
+			return "unlimited"
+		}
+		return strconv.FormatFloat(*v, 'f', -1, 64)
+	}
+	return f(t.Min) + "/" + f(t.Preferred) + "/" + f(t.Max)
 }

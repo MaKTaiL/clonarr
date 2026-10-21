@@ -239,6 +239,18 @@ func (s *Server) handleUpdateAutoSyncRule(w http.ResponseWriter, r *http.Request
 				if rule.CustomizeEnabled == nil {
 					rule.CustomizeEnabled = existing.CustomizeEnabled
 				}
+				// Same contract for the quality size choice. Only the
+				// profile editor's Quality size tab owns these, so a caller
+				// that does not send them (the enabled toggle, the post-sync
+				// echo, Compare's keepArrCFIDs update) must leave them alone
+				// rather than reset the rule to off. Turning it off is an
+				// explicit "off", which is a value and survives this.
+				if rule.QualitySizeSource == "" {
+					rule.QualitySizeSource = existing.QualitySizeSource
+				}
+				if rule.QualitySizeOverrides == nil {
+					rule.QualitySizeOverrides = existing.QualitySizeOverrides
+				}
 				switch {
 				case saveOnly && !autoSyncRuleEquivalent(rule, existing):
 					rule.UpdatedAt = time.Now().Format(time.RFC3339)
@@ -645,6 +657,10 @@ func (s *Server) handleRestoreAutoSyncRule(w http.ResponseWriter, r *http.Reques
 	endResult := "error: unknown"
 	defer func() { op.End(endResult) }()
 
+	// Carries the rule's size intent too. Filling only the saved sets, which
+	// is what this did at first, is useless without a source: the restored
+	// profile came out with the app's schema defaults and nothing said so.
+	core.FillQualitySizeIntent(&syncReq, rule, s.Core.Config.Get().QualitySizeSets)
 	plan, err := core.BuildSyncPlan(ad, inst, syncReq, imported, customCFs, nil, s.Core.HTTPClient, op)
 	if err != nil {
 		endResult = fmt.Sprintf("error: plan failed: %v", err)
@@ -732,12 +748,16 @@ func (s *Server) handleRestoreAutoSyncRule(w http.ResponseWriter, r *http.Reques
 		QualityStructure:  syncReq.QualityStructure,
 		Overrides:         syncReq.Overrides,
 		Behavior:          syncReq.Behavior,
-		CFsCreated:        result.CFsCreated,
-		CFsUpdated:        result.CFsUpdated,
-		ScoresUpdated:     result.ScoresUpdated,
-		LastSync:          now,
-		AppliedAt:         now,
-		TriggerType:       core.TriggerRestore,
+		// Mirrors the rest of this literal: syncReq is the intent that was
+		// written, filled from the rule by FillQualitySizeIntent above.
+		QualitySizeSource:    syncReq.QualitySizeSource,
+		QualitySizeOverrides: syncReq.QualitySizeOverrides,
+		CFsCreated:           result.CFsCreated,
+		CFsUpdated:           result.CFsUpdated,
+		ScoresUpdated:        result.ScoresUpdated,
+		LastSync:             now,
+		AppliedAt:            now,
+		TriggerType:          core.TriggerRestore,
 		Changes: &core.SyncChanges{
 			SettingsDetails: []string{fmt.Sprintf("Restored profile (created new ArrProfileID %d)", result.ArrProfileID)},
 		},
@@ -768,7 +788,6 @@ func (s *Server) handleRestoreAutoSyncRule(w http.ResponseWriter, r *http.Reques
 		"scoresUpdated":  result.ScoresUpdated,
 	})
 }
-
 
 // handleRuleCustomizations returns a per-rule breakdown of how much each
 // sync rule deviates from its TRaSH profile defaults. Read-only — does
@@ -842,4 +861,3 @@ func (s *Server) handleRuleCustomizations(w http.ResponseWriter, r *http.Request
 
 	writeJSON(w, out)
 }
-

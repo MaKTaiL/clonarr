@@ -2,7 +2,6 @@
 // Profile Builder's TRaSH-JSON / Recyclarr export). This exports a single sync
 // rule as a self-contained clonarr file that re-imports 1:1 into another Clonarr.
 // Backend: internal/core/rule_export.go + internal/api/rule_portability.go.
-// See docs/clonarr/sync-rule-import-export-plan.md.
 
 export default {
   state: {
@@ -157,12 +156,28 @@ export default {
         qualityOverrides: ru.qualityOverrides || {},
         overrides: ru.overrides || null,
         description: ru.description || '',
+        // A guide: source travels as-is, since a trash_id means the same set
+        // everywhere. A custom: source is rewritten by the import endpoint to
+        // the local id of the bundled set, matching an existing set by name or
+        // storing it, the same as a bundled custom format. A custom: source
+        // still here means the file predates that bundling, and carrying the
+        // other install's id would resolve to nothing and write no sizes while
+        // looking like a choice the importer made.
+        qualitySizeSource: (ru.qualitySizeSource || '').startsWith('custom:') && !(exp.qualitySizeSets || []).length
+          ? 'off'
+          : (ru.qualitySizeSource || ''),
+        qualitySizeOverrides: ru.qualitySizeOverrides || {},
       }, this.profileDetail.detail);
       // applyRuleStateToEditor turns Customize on by itself when the import
       // carries TRaSH formats from outside the base profile, or excluded
       // formats. Scores and bundled custom formats need it off, so don't
       // force it on here - that would greet the importer with the whole
       // TRaSH catalogue expanded.
+      if ((ru.qualitySizeSource || '').startsWith('custom:') && !(exp.qualitySizeSets || []).length) {
+        this.showToast(
+          'This file was exported before quality-size sets travelled with a rule, so Quality size is set to Off here. Your own per-quality values came across. Pick a set or save your own.',
+          'info', 11000);
+      }
       this.showToast('Imported. Review the settings, then Apply & Sync to name and create the rule.', 'success', 7000);
     },
   },

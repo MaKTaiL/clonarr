@@ -51,7 +51,7 @@ func TestResolvedItemsKeepInstanceQualitySizes(t *testing.T) {
 		{Name: "Unknown", Allowed: false},
 	}
 
-	built, err := resolveQualityItems(trashItems, byName)
+	built, err := resolveQualityItems(trashItems, byName, nil)
 	if err != nil {
 		t.Fatalf("resolveQualityItems: %v", err)
 	}
@@ -126,5 +126,44 @@ func TestResolvedItemsKeepInstanceQualitySizes(t *testing.T) {
 		if s[1] == nil || *s[1] != want[1] {
 			t.Errorf("%s maxSize = %v, want %v", name, s[1], want[1])
 		}
+	}
+}
+
+// TestCloneQualityItemsKeepsSizes locks in that the config deep copy carries
+// per-profile quality sizes. Config.Get() clones every rule's quality
+// structure, so a field missed here is silently dropped on every read.
+func TestCloneQualityItemsKeepsSizes(t *testing.T) {
+	min, max, pref := 2.0, 100.0, 95.0
+	src := []QualityItem{{
+		Name:          "WEB 1080p",
+		Allowed:       true,
+		Items:         []string{"WEBDL-1080p", "WEBRip-1080p"},
+		MinSize:       &min,
+		MaxSize:       &max,
+		PreferredSize: &pref,
+	}}
+
+	out := cloneQualityItems(src)
+	if len(out) != 1 {
+		t.Fatalf("expected 1 item, got %d", len(out))
+	}
+	got := out[0]
+	if got.MinSize == nil || got.MaxSize == nil || got.PreferredSize == nil {
+		t.Fatalf("sizes dropped by the deep copy: %+v", got)
+	}
+	if *got.MinSize != min || *got.MaxSize != max || *got.PreferredSize != pref {
+		t.Errorf("sizes changed: got %v/%v/%v want %v/%v/%v",
+			*got.MinSize, *got.MaxSize, *got.PreferredSize, min, max, pref)
+	}
+	if got.MinSize == src[0].MinSize {
+		t.Error("deep copy shares the pointer with the original")
+	}
+
+	// Mutating the copy must not reach the original. Compared against a
+	// literal, not against min: min is the variable src points at, so an
+	// aliased copy would change both sides and the check would pass.
+	*out[0].MinSize = 7
+	if *src[0].MinSize != 2.0 {
+		t.Errorf("original mutated through the copy: %v", *src[0].MinSize)
 	}
 }

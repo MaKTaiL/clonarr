@@ -160,8 +160,8 @@ export default {
     // list, same shape whether 1 or N instances so the badge itself stays
     // consistent ("in use" always) and details live in the tooltip.
     // Rendered via white-space: pre-line on the tooltip stylesheet.
-    // (Per-section instance picker would make this redundant - open
-    // redesign item noted in CLAUDE.md.)
+    // (A per-section instance picker would make this redundant; that is an
+    // open redesign idea, not settled.)
     tpdInUseTooltip(appType, trashId) {
       const rules = this.autoSyncRules || [];
       const insts = this.instancesOfType(appType);
@@ -1433,7 +1433,7 @@ export default {
     // TODO (deferred - backend fix, ~30-45 min): sort.SliceStable inside
     // BuildSyncPlan + ExecuteSyncPlan so EVERY consumer (Classic editor,
     // sync history, API responses) gets natural-order results, not just
-    // Sync Preview. Tracked in container CLAUDE.md.
+    // Sync Preview.
     //
     // @param actions  array of {name, ...} or {cfName, ...} objects
     // @param nameKey  which field carries the CF name ("name" or "cfName")

@@ -255,6 +255,10 @@
     padding: 1px 7px; border-radius: 9px;
     min-width: 22px; text-align: center;
   }
+  /* Every sidebar count renders as '' when it is zero, and the pill has a
+     background and a min-width, so an in-sync entry left a small empty grey
+     bar behind that reads as a dash. */
+  .cmp-side-count:empty { display: none; }
   .cmp-side-item.active .cmp-side-count {
     background: var(--app-color);
     color: var(--text-on-accent);

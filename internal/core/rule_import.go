@@ -9,7 +9,7 @@ import (
 // Portable sync-rule import. Validates a clonarr export envelope, recreates the
 // bundled custom CFs (with per-CF collision resolution), and returns the rule
 // with its custom CF references remapped to the local custom CF ids so the
-// editor can load it. See docs/clonarr/sync-rule-import-export-plan.md.
+// editor can load it.
 
 // ImportCollision describes a bundled custom CF whose name already exists in the
 // local registry, so the user must choose how to resolve it.

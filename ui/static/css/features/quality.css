@@ -131,3 +131,49 @@
   .qs-member-gap.dnd-active { background: var(--alpha-blue); }
   .qs-member-gap.dnd-hover  { background: var(--accent-blue); }
   .qs-member-gap.dnd-active::before { content: ''; position: absolute; left: 0; right: 0; top: -4px; bottom: -4px; }
+
+  /* Per-profile quality sizes (profile editor -> Quality size tab).
+     Own class names on purpose: .qs-row and .qs-name are each declared twice
+     in this file, and the later pair belongs to the drag-and-drop quality
+     structure editor (flex:1, nowrap, overflow:hidden, no row separator).
+     Reusing them put this table on those rules, which clipped the group and
+     "not allowed" notes nested inside the name cell and ignored its width. */
+  .pqs-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 7px 0;
+    border-bottom: 1px solid var(--bg-muted);
+  }
+  .pqs-row:last-child { border-bottom: none; }
+  .pqs-head {
+    padding-bottom: 6px;
+    margin-bottom: 2px;
+    border-bottom: 1px solid var(--border-subtle);
+    font-size: 13px;
+    color: var(--text-muted);
+  }
+  /* Wide enough for a long quality name plus its group and allowed notes,
+     which sit inside this cell and must stay readable. */
+  .pqs-name { width: 230px; flex-shrink: 0; font-size: 13px; font-weight: 500; }
+  .pqs-head .pqs-name { font-weight: 400; }
+  /* The three numbers mean nothing unlabelled, so each value column names
+     them under its own heading. */
+  .pqs-sub {
+    font-size: 10px;
+    font-weight: 400;
+    letter-spacing: 0.02em;
+    color: var(--text-muted);
+    opacity: 0.75;
+    margin-top: 1px;
+  }
+  /* Wide enough for the three number inputs that replace the text when a
+     quality is set to Custom, so the row does not reflow on the switch. */
+  .pqs-written { width: 196px; flex-shrink: 0; }
+  .pqs-edit { display: flex; gap: 6px; align-items: center; }
+  .pqs-edit input {
+    width: 58px;
+    padding: 2px 4px;
+    font-size: 12px;
+    text-align: right;
+  }

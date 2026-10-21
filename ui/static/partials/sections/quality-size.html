@@ -35,7 +35,7 @@
               <template x-if="mediaInstanceId[activeAppType] && qsPerProfile(activeAppType)">
                 <div class="result-banner info" style="margin:0 0 12px">
                   <div class="result-title">This version keeps quality sizes on each quality profile</div>
-                  <div class="result-detail">Sizes are set per quality profile in Sonarr, not in one shared list, so nothing here is written to this instance. The values below are what TRaSH-Guides recommends. When Clonarr syncs a profile it keeps the sizes you have set in Sonarr.</div>
+                  <div class="result-detail">Sizes are set per quality profile on this version, not in one shared list, so nothing here is written to this instance. Set them in <a class="inline-link" :href="navHref('profiles')">Profiles</a>: open a profile and use its Quality size tab. The values below are what TRaSH-Guides recommends, for reference.</div>
                 </div>
               </template>
               <!-- Auto-sync toggle bar (above header when instance selected) -->
