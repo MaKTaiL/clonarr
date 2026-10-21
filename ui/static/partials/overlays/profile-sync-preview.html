@@ -76,6 +76,9 @@
           <template x-if="syncPlan.summary.scoresToZero > 0">
             <span style="color:var(--accent-orange)"> - <span x-text="syncPlan.summary.scoresToZero"></span> extra scores zeroed</span>
           </template>
+          <template x-if="syncPlan.summary.qualitySizesToSet > 0">
+            <span> - <span x-text="syncPlan.summary.qualitySizesToSet"></span> quality sizes to set</span>
+          </template>
           <!-- Customized-basics count is only meaningful in CREATE
                mode where the new profile will receive all of them. In
                UPDATE mode the dry-run banner needs to reflect the
@@ -86,7 +89,7 @@
           <template x-if="syncPlan?.createProfile === true && spOverviewDiffs().modifiedBasics.length > 0">
             <span> - <span x-text="spOverviewDiffs().modifiedBasics.length"></span> customized settings</span>
           </template>
-          <template x-if="(syncPlan?.settingsPreview || []).length > 0 || (syncPlan?.qualityPreview || []).length > 0 || (syncPlan?.cfActions || []).some(a => a.action !== 'unchanged') || (syncPlan?.scoreActions || []).some(a => a.action !== 'unchanged')">
+          <template x-if="(syncPlan?.settingsPreview || []).length > 0 || (syncPlan?.qualityPreview || []).length > 0 || (syncPlan?.qualitySizePreview || []).length > 0 || (syncPlan?.cfActions || []).some(a => a.action !== 'unchanged') || (syncPlan?.scoreActions || []).some(a => a.action !== 'unchanged')">
             <div style="margin-top:6px">
               <a style="font-size:12px;color:var(--accent-blue);cursor:pointer;user-select:none" @click="dryrunDetailsOpen = !dryrunDetailsOpen"
                  x-text="dryrunDetailsOpen ? '▾ Hide details' : '▸ Show details'"></a>
@@ -119,6 +122,10 @@
                 </template>
                 <template x-for="q in (syncPlan?.qualityPreview || [])" :key="q">
                   <div><span style="color:var(--accent-orange)">Quality:</span> <span x-text="q"></span></div>
+                </template>
+                <!-- The full per-quality list the modal only counted. -->
+                <template x-for="q in (syncPlan?.qualitySizePreview || [])" :key="'qs-'+q">
+                  <div><span style="color:var(--accent-orange)">Size:</span> <span x-text="q"></span></div>
                 </template>
                 <!-- spSortActions sorts by profile's natural order
                      (formatItems → default-on groups → additional). -->

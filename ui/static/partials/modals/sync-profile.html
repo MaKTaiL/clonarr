@@ -86,6 +86,14 @@
           <div x-show="syncPreview?.summary?.scoresUnchanged > 0" style="color:var(--text-muted)">
             <span x-text="syncPreview?.summary?.scoresUnchanged"></span> scores already correct
           </div>
+          <!-- A count, not the lines. Picking a set changes 14 to 20 sizes at
+               once, and every number is already on screen in the Quality size
+               tab; listing them here would bury the quality and settings lines
+               that are not shown anywhere else. The dry run's expandable
+               details carry the full list. -->
+          <div x-show="syncPreview?.summary?.qualitySizesToSet > 0" style="color:var(--accent-orange)">
+            <span x-text="syncPreview?.summary?.qualitySizesToSet"></span> quality sizes to set
+          </div>
           <div x-show="(syncPreview?.settingsPreview || []).length > 0 || (syncPreview?.qualityPreview || []).length > 0"
                style="margin-top:8px;max-height:220px;overflow-y:auto;border:1px solid var(--border-subtle);border-radius:6px;padding:8px 10px;background:var(--bg-page)">
             <template x-for="s in (syncPreview?.settingsPreview || [])" :key="s">

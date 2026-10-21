@@ -88,6 +88,13 @@ type SyncPlan struct {
 	Summary         SyncSummary   `json:"summary"`
 	QualityPreview  []string      `json:"qualityPreview,omitempty"`  // e.g. "Bluray-2160p: Enabled → Disabled"
 	SettingsPreview []string      `json:"settingsPreview,omitempty"` // e.g. "Upgrade Until: WEB 1080p → WEB 2160p"
+	// QualitySizePreview is kept apart from QualityPreview so the sync
+	// modal can show a count while the dry run's expandable details still
+	// list every line. Choosing a set changes 14 to 20 sizes at once, and
+	// the Quality size tab already shows each number, so repeating them
+	// inline in the modal would bury the quality and settings lines that
+	// are not visible anywhere else.
+	QualitySizePreview []string `json:"qualitySizePreview,omitempty"` // e.g. "HDTV-1080p size: 4/95/125 → 15/995/1000"
 	// DanglingCustomCFs lists "custom:<id>" references on the rule whose
 	// underlying custom CF no longer exists in CustomCFs (the user deleted
 	// it). Apply paths feed this into CleanupDanglingCustomCFsOnRule after
@@ -125,6 +132,7 @@ func (p *SyncPlan) HasChanges() bool {
 	}
 	return p.Summary.CFsToCreate > 0 || p.Summary.CFsToUpdate > 0 ||
 		p.Summary.ScoresToSet > 0 || p.Summary.ScoresToZero > 0 ||
+		p.Summary.QualitySizesToSet > 0 ||
 		p.Summary.QualityChanged || p.CreateProfile
 }
 
@@ -137,6 +145,10 @@ type SyncSummary struct {
 	ScoresToSet     int  `json:"scoresToSet"`
 	ScoresUnchanged int  `json:"scoresUnchanged"`
 	ScoresToZero    int  `json:"scoresToZero"` // extra CFs that will be zeroed out
+	// QualitySizesToSet counts the qualities whose min, preferred or max
+	// this sync will change. Only ever non-zero where the instance keeps
+	// sizes on the profile.
+	QualitySizesToSet int `json:"qualitySizesToSet,omitempty"`
 	// MaxPossibleScore is the sum of every positive CF score that will be
 	// in the profile after this sync runs. This is exactly what
 	// Sonarr/Radarr enforce as the upper limit for Min Format Score
@@ -888,7 +900,8 @@ func BuildSyncPlan(ad *AppData, instance Instance, req SyncRequest, imported *Im
 					// reads Summary.QualityChanged, and a size-only change
 					// must not make it claim the order moved.
 					if changes := diffQualitySizes(collectQualitySizes(targetProfile.Items), collectQualitySizes(newItems)); len(changes) > 0 {
-						plan.QualityPreview = append(plan.QualityPreview, changes...)
+						plan.QualitySizePreview = append(plan.QualitySizePreview, changes...)
+						plan.Summary.QualitySizesToSet = len(changes)
 						plan.Summary.QualityChanged = true
 					}
 				}
