@@ -123,6 +123,11 @@ export default {
     pdQSArrProfileId() {
       const locked = this.profileDetail?._editLockedArrProfileId;
       if (locked) return locked;
+      // syncForm is only authoritative while the sync modal is open. The
+      // modal rebuilds it from scratch on open, so before that its fields
+      // still hold the *previous* profile's target: browsing a guide profile
+      // after syncing another one sent that one's id, on the other instance.
+      if (!this.showSyncModal) return 0;
       const n = parseInt(this.syncForm?.arrProfileId, 10);
       return Number.isFinite(n) && n > 0 ? n : 0;
     },
@@ -133,7 +138,8 @@ export default {
     // answer for a different instance of the same app when that one keeps its
     // sizes in the shared list.
     pdQSPreferredInstanceId() {
-      return this.syncForm?.instanceId || this.profileDetail?.instance?.id || '';
+      if (this.showSyncModal && this.syncForm?.instanceId) return this.syncForm.instanceId;
+      return this.profileDetail?.instance?.id || '';
     },
 
     pdQSShowTab() {

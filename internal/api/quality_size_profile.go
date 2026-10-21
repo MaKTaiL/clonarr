@@ -171,6 +171,16 @@ func (s *Server) handleProfileQualitySizes(w http.ResponseWriter, r *http.Reques
 
 	client := core.NewArrClientFor(*target, s.Core.HTTPClient)
 
+	// A profile id belongs to the instance it came from. When the caller
+	// preferred one instance and the sizes live on another, the id names a
+	// profile on the instance we are not reading, so it cannot be used here.
+	// Keeping it meant looking up a Sonarr 4 profile id on the Sonarr 5
+	// instance: a 404 at best, and the wrong profile's sizes when the two
+	// happen to share an id, which small sequential ids do often.
+	if arrProfileID > 0 && preferred != "" && preferred != target.ID {
+		arrProfileID = 0
+	}
+
 	// Where the "on the instance" column comes from. An existing profile has
 	// real values; one that does not exist yet gets the blank profile the app
 	// offers as a starting point, which on these versions carries the app's
@@ -179,11 +189,18 @@ func (s *Server) handleProfileQualitySizes(w http.ResponseWriter, r *http.Reques
 	if arrProfileID > 0 {
 		profile, err := client.GetProfile(arrProfileID)
 		if err != nil {
-			writeError(w, 502, "Failed to read the quality profile: "+err.Error())
-			return
+			// The column is context, not the feature. A profile the instance
+			// does not have is the same situation as one that does not exist
+			// yet, so fall back to the template and say so rather than fail
+			// the whole tab out of existence.
+			arrProfileID = 0
+			resp["warning"] = "Could not read that profile on " + target.Name +
+				", so the \"on the instance\" column shows the defaults a new profile starts with."
+		} else {
+			items = profile.Items
 		}
-		items = profile.Items
-	} else {
+	}
+	if arrProfileID == 0 {
 		schema, err := client.GetProfileSchema()
 		if err != nil {
 			writeError(w, 502, "Failed to read the profile template: "+err.Error())
