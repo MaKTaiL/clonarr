@@ -167,26 +167,13 @@
     opacity: 0.75;
     margin-top: 1px;
   }
-  /* The Custom inputs are part of the row above, not a thing of their own.
-     Without the rule and the inset they read as a stray line under the
-     table. */
-  .pqs-edit {
-    display: flex;
-    gap: 10px;
-    align-items: center;
-    flex-wrap: wrap;
-    margin: 0 0 8px 12px;
-    padding: 7px 12px;
-    border-left: 2px solid var(--accent-blue-muted);
-    background: var(--bg-muted);
-    border-radius: 0 4px 4px 0;
-  }
-  .pqs-edit-field {
-    display: flex;
-    align-items: center;
-    gap: 5px;
+  /* Wide enough for the three number inputs that replace the text when a
+     quality is set to Custom, so the row does not reflow on the switch. */
+  .pqs-written { width: 196px; flex-shrink: 0; }
+  .pqs-edit { display: flex; gap: 6px; align-items: center; }
+  .pqs-edit input {
+    width: 58px;
+    padding: 2px 4px;
     font-size: 12px;
-    color: var(--text-muted);
+    text-align: right;
   }
-  .pqs-edit-field input { width: 84px; padding: 3px 6px; font-size: 12px; }
-  .pqs-edit-unit { font-size: 11px; color: var(--text-muted); }

@@ -1917,7 +1917,7 @@
                 <div style="width:150px;flex-shrink:0" x-tt="'What this quality is set to on the instance right now.'">On the instance
                   <div class="pqs-sub">min / pref / max</div>
                 </div>
-                <div style="width:150px;flex-shrink:0" x-tt="'What Clonarr writes on the next sync.'">Will be written
+                <div class="pqs-written" x-tt="'What Clonarr writes on the next sync, in ' + (pdQSAppType() === 'radarr' ? 'MB' : 'MB per minute') + ', the same units the app shows.'">Will be written
                   <div class="pqs-sub">min / pref / max</div>
                 </div>
                 <div style="flex:1;min-width:120px">Source</div>
@@ -1925,7 +1925,6 @@
               </div>
 
               <template x-for="row in pdQSVisibleRows()" :key="row.quality">
-                <div>
                   <div class="pqs-row" :style="pdQSRowAllowed(row) ? {} : { opacity: '0.6' }">
                     <div class="pqs-name">
                       <span x-text="row.quality"></span>
@@ -1937,7 +1936,26 @@
                       </template>
                     </div>
                     <div style="width:150px;flex-shrink:0;font-size:13px;color:var(--text-secondary)" x-text="pdQSCurrentText(row)"></div>
-                    <div style="width:150px;flex-shrink:0;font-size:13px;color:var(--text-primary)" x-text="pdQSResolvedText(row)"></div>
+                    <!-- The inputs live in this column because that is what
+                         they are: the values that get written. They line up
+                         under the min / pref / max the heading already names,
+                         so no row needs its own labels and no extra line is
+                         spent on them. -->
+                    <div class="pqs-written">
+                      <template x-if="!pdQSIsCustom(row.quality)">
+                        <span style="font-size:13px;color:var(--text-primary)" x-text="pdQSResolvedText(row)"></span>
+                      </template>
+                      <template x-if="pdQSIsCustom(row.quality)">
+                        <span class="pqs-edit">
+                          <template x-for="f in ['min','preferred','max']" :key="f">
+                            <input type="number" step="0.1" min="0"
+                                   :aria-label="f"
+                                   :value="pdQSOverrideVal(row.quality, f)"
+                                   @change="pdQSSetOverrideVal(row.quality, f, $event.target.value)">
+                          </template>
+                        </span>
+                      </template>
+                    </div>
                     <div style="flex:1;min-width:120px;font-size:12px;color:var(--text-muted)" x-text="pdQSRowSource(row)"></div>
                     <div style="width:104px;flex-shrink:0;display:flex;justify-content:center">
                       <div class="qs-mode-seg">
@@ -1948,22 +1966,6 @@
                       </div>
                     </div>
                   </div>
-                  <!-- The three inputs only appear in Custom, so an
-                       untouched list stays a list rather than a form. -->
-                  <template x-if="pdQSIsCustom(row.quality)">
-                    <div class="pqs-edit">
-                      <template x-for="f in ['min','preferred','max']" :key="f">
-                        <label class="pqs-edit-field">
-                          <span x-text="f === 'preferred' ? 'Preferred' : f.charAt(0).toUpperCase() + f.slice(1)"></span>
-                          <input type="number" step="0.1" min="0"
-                                 :value="pdQSOverrideVal(row.quality, f)"
-                                 @change="pdQSSetOverrideVal(row.quality, f, $event.target.value)">
-                        </label>
-                      </template>
-                      <span class="pqs-edit-unit" x-text="pdQSAppType() === 'radarr' ? 'MB' : 'MB per minute'"></span>
-                    </div>
-                  </template>
-                </div>
               </template>
 
               <template x-if="pdQSVisibleRows().length === 0">
