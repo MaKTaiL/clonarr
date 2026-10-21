@@ -1240,7 +1240,7 @@
 
                                             
                                             <!-- ===== Required CFs (Format Items) ===== -->
-                                            <template x-if="!['general','quality','quality-order','extra','optional'].includes(compareFilter) && cmpRequiredVisibleIn(cr, compareFilter)">
+                                            <template x-if="!['general','quality','quality-sizes','quality-order','extra','optional'].includes(compareFilter) && cmpRequiredVisibleIn(cr, compareFilter)">
                                               <div class="card cmp-section cmp-section-required" style="margin-bottom:10px;overflow:hidden">
                                                 <div class="cmp-section-header">
                                                   <span class="cmp-section-title">Required CFs (Format Items)</span>
@@ -1285,7 +1285,7 @@
                                                  optional groups, preserving the All Diffs visual
                                                  ordering (Format Items -> Default on -> Optional). -->
                                             <template x-for="g in [...((cr.groups || []).filter(g => g.defaultEnabled)), ...((cr.groups || []).filter(g => !g.defaultEnabled))]" :key="'grp-'+g.name">
-                                              <template x-if="!['general','quality','quality-order','extra'].includes(compareFilter) && cmpGroupVisibleIn(g, compareFilter)">
+                                              <template x-if="!['general','quality','quality-sizes','quality-order','extra'].includes(compareFilter) && cmpGroupVisibleIn(g, compareFilter)">
                                                 <div class="card cmp-section" :class="g.defaultEnabled ? 'cmp-section-default-on' : 'cmp-section-optional'" style="margin-bottom:10px;overflow:hidden">
                                                   <div class="cmp-section-header">
                                                     <span class="cmp-section-title" x-text="g.name"></span>
@@ -1380,7 +1380,7 @@
                                             </template>
 
                                             <!-- Empty-state: nothing visible in current pane. -->
-                                            <template x-if="!['general','quality','quality-order'].includes(compareFilter) &&
+                                            <template x-if="!['general','quality','quality-sizes','quality-order'].includes(compareFilter) &&
                                                             !cmpRequiredVisibleIn(cr, compareFilter) &&
                                                             !(cr.groups || []).some(g => cmpGroupVisibleIn(g, compareFilter)) &&
                                                             !((compareFilter === 'extra' || compareFilter === 'all-diffs' || compareFilter === 'all-active') && (cr.extraCFs || []).length > 0)">
