@@ -98,10 +98,14 @@ export default {
         const d = await r.json();
         if (!stillCurrent()) return;
         this.pdQSPerProfile = !!d.perProfileSizes;
+        this.pdQSUnknown = !!d.unknown;
         // Switching the target to an instance that keeps sizes in the shared
         // list takes the tab away. Leave it rather than leaving its panel on
-        // screen with no tab to go back to.
-        if (!this.pdQSPerProfile && this.spActiveTab === 'quality-size') {
+        // screen with no tab to go back to. An unreachable instance keeps the
+        // tab, so it must not be kicked out of here: checking only
+        // perProfile bounced the user straight back out of a tab that was
+        // showing them why it could not load.
+        if (!this.pdQSShowTab() && this.spActiveTab === 'quality-size') {
           this.spActiveTab = 'default';
         }
         this.pdQSRows = d.rows || [];
@@ -112,7 +116,6 @@ export default {
         this.pdQSInstanceSwitched = !!d.instanceSwitched;
         this.pdQSFromSchema = !!d.fromSchema;
         this.pdQSWarning = d.warning || '';
-        this.pdQSUnknown = !!d.unknown;
         this.pdQSLoadedKey = key;
         // The rule on disk is the truth on open; the editor's own state takes
         // over from the first edit.

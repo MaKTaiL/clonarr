@@ -1860,12 +1860,18 @@
               <template x-if="pdQSWarning">
                 <div class="result-banner error" style="margin:0 0 10px">
                   <div class="result-detail" x-text="pdQSWarning"></div>
+                  <template x-if="pdQSUnknown">
+                    <div class="result-detail">You can still choose a set below and save. It is written on the next sync once the instance answers again.</div>
+                  </template>
                 </div>
               </template>
-              <!-- Nothing below this can be answered when we could not reach
-                   an instance of this type: the warning above is the whole
-                   content of the tab in that case. -->
-              <div x-show="pdQSPerProfile" style="display:flex;flex-wrap:wrap;gap:6px;align-items:center">
+              <!-- The picker needs no instance: the sets come from the guide
+                   and from the config. So it stays usable while an instance is
+                   down, and the choice is saved and written when it is back,
+                   which is what the editor promises elsewhere. Only the row
+                   table below needs the instance, because the rows are its
+                   qualities and its current numbers. -->
+              <div style="display:flex;flex-wrap:wrap;gap:6px;align-items:center">
                 <button class="qs-type-btn"
                         :class="{ active: !pdQSSource || pdQSSource === 'off' }"
                         @click="pdQSSetSource('off')"
