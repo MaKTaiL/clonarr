@@ -4,7 +4,6 @@ import "strings"
 
 // Portable sync-rule export. A self-contained, clonarr-native representation of
 // one sync rule that re-imports as a 1:1 identical rule on another machine.
-// See docs/clonarr/sync-rule-import-export-plan.md.
 //
 // The envelope (ClonarrExport + SchemaVersion + App) identifies the file so
 // import can reject Recyclarr / TRaSH / other JSON cleanly instead of

@@ -400,7 +400,7 @@ export default {
         return QS_FIELDS.map(f => ov?.[f] ?? 0).join(' / ');
       }
       const entry = this.pdQSEntryFor(row.quality);
-      if (!entry) return '—';
+      if (!entry) return '-';
       return QS_FIELDS.map(f => entry[f]).join(' / ');
     },
 

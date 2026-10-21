@@ -14,9 +14,8 @@ import (
 // rather than building a rule that references a non-existent CF.
 var errImportCFNotStored = errors.New("a bundled custom format could not be saved (possible duplicate name)")
 
-// Portable sync-rule import/export endpoints. See
-// docs/clonarr/sync-rule-import-export-plan.md. Kept in its own file (not
-// autosync.go) so the feature stays self-contained and easy to extend.
+// Portable sync-rule import/export endpoints. Kept in their own file rather
+// than in autosync.go so the feature stays self-contained and easy to extend.
 
 // handleExportRule returns a self-contained, clonarr-native export of one sync
 // rule: the portable rule fields, the base profile reference, and the full

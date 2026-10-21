@@ -2,7 +2,6 @@
 // Profile Builder's TRaSH-JSON / Recyclarr export). This exports a single sync
 // rule as a self-contained clonarr file that re-imports 1:1 into another Clonarr.
 // Backend: internal/core/rule_export.go + internal/api/rule_portability.go.
-// See docs/clonarr/sync-rule-import-export-plan.md.
 
 export default {
   state: {

@@ -19,8 +19,8 @@ import (
 //	S4_URL/S4_KEY   a Sonarr that keeps them in the shared list (v4)
 //	R_URL/R_KEY     a Radarr
 //
-// The command, and the reason for the --network flag, is in
-// docs/clonarr/v5-quality-size-test-plan.md.
+// Run them from a container on the same Docker network as the instances, or
+// the hostnames in the URLs will not resolve.
 func TestLiveV5PerProfileSizes(t *testing.T) {
 	url, key := os.Getenv("V5_URL"), os.Getenv("V5_KEY")
 	if url == "" || key == "" {
