@@ -1810,7 +1810,7 @@
          refreshed when the tab is clicked. Deliberately not an x-effect:
          pdQSLoad writes the same state an effect would track as a
          dependency, which re-enters. -->
-    <div class="sp-body" x-show="spActiveTab === 'quality-size'"
+    <div class="sp-body" x-show="spActiveTab === 'quality-size' && pdQSShowTab()"
          style="grid-template-columns: 1fr">
       <div style="padding:16px 20px;max-width:1100px">
 

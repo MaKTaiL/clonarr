@@ -53,8 +53,7 @@ export default {
     async pdQSLoad(force = false) {
       const app = this.pdQSAppType();
       if (!app) {
-        this.pdQSPerProfile = false;
-        this.pdQSRows = [];
+        this.pdQSDropTab();
         return;
       }
       // Keyed on the target, not on a rule. A rule only exists after the
@@ -89,13 +88,18 @@ export default {
           // An instance that is down, or a profile it no longer has. Say
           // nothing rather than show an empty tab that reads as "this profile
           // has no qualities".
-          this.pdQSPerProfile = false;
-          this.pdQSRows = [];
+          this.pdQSDropTab();
           return;
         }
         const d = await r.json();
         if (!stillCurrent()) return;
         this.pdQSPerProfile = !!d.perProfileSizes;
+        // Switching the target to an instance that keeps sizes in the shared
+        // list takes the tab away. Leave it rather than leaving its panel on
+        // screen with no tab to go back to.
+        if (!this.pdQSPerProfile && this.spActiveTab === 'quality-size') {
+          this.spActiveTab = 'default';
+        }
         this.pdQSRows = d.rows || [];
         this.pdQSSets = d.sets || [];
         this.pdQSDefaultSetType = d.defaultSetType || '';
@@ -159,6 +163,12 @@ export default {
 
     pdQSShowTab() {
       return !!this.pdQSPerProfile;
+    },
+
+    pdQSDropTab() {
+      this.pdQSPerProfile = false;
+      this.pdQSRows = [];
+      if (this.spActiveTab === 'quality-size') this.spActiveTab = 'default';
     },
 
     // --- The source selector ---
