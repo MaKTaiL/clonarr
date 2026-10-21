@@ -1915,7 +1915,7 @@
 
               <template x-for="row in pdQSVisibleRows()" :key="row.quality">
                 <div>
-                  <div class="pqs-row" :style="row.allowed ? { opacity: '0.6' } : {}">
+                  <div class="pqs-row" :style="row.allowed ? {} : { opacity: '0.6' }">
                     <div class="pqs-name">
                       <span x-text="row.quality"></span>
                       <template x-if="row.group">
